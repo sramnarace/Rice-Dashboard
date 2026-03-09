@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🌾 Guyana Rice Processing Control System</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body { background: #0a1208; color: #f0e6c8; font-family: 'Syne', sans-serif; }
+    ::-webkit-scrollbar { width: 6px; background: #0a1208; }
+    ::-webkit-scrollbar-thumb { background: #2a3d22; border-radius: 3px; }
+    input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: transparent; cursor: pointer; position: absolute; top: -6px; left: 0; opacity: 0; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #7ab648; cursor: pointer; border: 2px solid #0a1208; }
+    input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #7ab648; cursor: pointer; border: 2px solid #0a1208; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const BASE = {
+      daily_intake: 1000,
+      annual_intake: 120000,
+      yield_head: 0.60,
+      yield_brokens: 0.10,
+      yield_bran: 0.08,
+      dryer_tph: 42,
+      processing_cost: 60,
+    };
+
+    const CARICOM_WEIGHTS = {
+      "Bahamas": 0.24, "Barbados": 0.20, "Trinidad": 0.18,
+      "St. Kitts": 0.10, "Antigua": 0.09, "St. Lucia": 0.08, "Guyana": 0.11,
+    };
+
+    function Slider({ label, min, max, step, value, onChange, unit, color }) {
+      return (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+            <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", color: "#94a87a", fontFamily: "'DM Mono', monospace" }}>{label}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#f0e6c8", fontFamily: "'DM Mono', monospace" }}>
+              {typeof value === "number" && value % 1 !== 0 ? value.toFixed(2) : value.toLocaleString()}{unit}
+            </span>
+          </div>
+          <div style={{ position: "relative", height: 6, background: "#1e2d1a", borderRadius: 3 }}>
+            <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${((value - min) / (max - min)) * 100}%`, background: color || "#7ab648", borderRadius: 3, transition: "width 0.1s" }} />
+            <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(+e.target.value)} />
+          </div>
+        </div>
+      );
+    }
+
+    function Metric({ label, value, sub, status }) {
+      const statusColor = status === "ok" ? "#7ab648" : status === "warn" ? "#e8b84b" : status === "bad" ? "#e05c5c" : "#94a87a";
+      return (
+        <div style={{ background: "#111d0e", border: "1px solid #2a3d22", borderRadius: 8, padding: "16px 18px", minWidth: 0 }}>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.14em", color: "#5a7a48", marginBottom: 6, fontFamily: "'DM Mono', monospace" }}>{label}</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#f0e6c8", letterSpacing: "-0.02em", fontFamily: "'Syne', sans-serif", lineHeight: 1.1 }}>{value}</div>
+          {sub && <div style={{ fontSize: 11, color: statusColor, marginTop: 4, fontFamily: "'DM Mono', monospace" }}>{sub}</div>}
+        </div>
+      );
+    }
+
+    function SectionTitle({ children }) {
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "28px 0 14px" }}>
+          <div style={{ height: 2, width: 20, background: "#7ab648" }} />
+          <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.18em", color: "#7ab648", fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>{children}</span>
+          <div style={{ flex: 1, height: 1, background: "#1e2d1a" }} />
+        </div>
+      );
+    }
+
+    function StatusBadge({ ok, warn, msg }) {
+      const bg = ok ? "#0d2210" : warn ? "#221a06" : "#220d0d";
+      const border = ok ? "#2a5c18" : warn ? "#5c4018" : "#5c1818";
+      const color = ok ? "#7ab648" : warn ? "#e8b84b" : "#e05c5c";
+      const icon = ok ? "✓" : warn ? "⚠" : "✕";
+      return (
+        <div style={{ background: bg, border: `1px solid ${border}`, borderRadius: 6, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color, fontSize: 14, fontWeight: 700 }}>{icon}</span>
+          <span style={{ color, fontSize: 12, fontFamily: "'DM Mono', monospace" }}>{msg}</span>
+        </div>
+      );
+    }
+
+    function BarRow({ label, value, max, color, suffix }) {
+      const pct = Math.min((value / max) * 100, 100);
+      return (
+        <div style={{ display: "grid", gridTemplateColumns: "100px 1fr 80px", gap: 10, alignItems: "center", marginBottom: 10 }}>
+          <span style={{ fontSize: 11, color: "#94a87a", fontFamily: "'DM Mono', monospace", textAlign: "right" }}>{label}</span>
+          <div style={{ height: 8, background: "#1a2a14", borderRadius: 4, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 4, transition: "width 0.3s ease" }} />
+          </div>
+          <span style={{ fontSize: 12, color: "#f0e6c8", fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>{value.toLocaleString()}{suffix}</span>
+        </div>
+      );
+    }
+
+    function App() {
+      const [dryerLines, setDryerLines] = useState(2);
+      const [millTph, setMillTph] = useState(15);
+      const [storageCap, setStorageCap] = useState(60000);
+      const [intakeFactor, setIntakeFactor] = useState(1.0);
+      const [caricomShare, setCaricomShare] = useState(0.70);
+      const [ricePrice, setRicePrice] = useState(813);
+      const [paddyPrice, setPaddyPrice] = useState(308);
+      const [brokensPrice, setBrokensPrice] = useState(528);
+      const [millHours, setMillHours] = useState(20);
+      const [animated, setAnimated] = useState(false);
+      useEffect(() => { setTimeout(() => setAnimated(true), 50); }, []);
+
+      const dailyIntake = BASE.daily_intake * intakeFactor;
+      const annualIntake = BASE.annual_intake * intakeFactor;
+      const headRice = annualIntake * BASE.yield_head;
+      const caricomTarget = headRice * caricomShare;
+      const brokens = annualIntake * BASE.yield_brokens;
+      const bran = annualIntake * BASE.yield_bran;
+      const dryerCap = dryerLines * BASE.dryer_tph * 24;
+      const millCapDay = millTph * millHours;
+      const millCapYear = millCapDay * 330;
+      const peakStorage = annualIntake * 0.4;
+      const storagePct = (peakStorage / storageCap) * 100;
+      const daysToProcess = (annualIntake * 0.5) / millCapDay;
+      const revenueHead = ricePrice * BASE.yield_head;
+      const revenueBrokens = brokensPrice * BASE.yield_brokens;
+      const totalRevenue = revenueHead + revenueBrokens;
+      const margin = totalRevenue - paddyPrice - BASE.processing_cost;
+      const marginPct = (margin / paddyPrice) * 100;
+      const dryerOk = dryerCap >= dailyIntake * 1.1;
+      const millOk = millCapYear >= annualIntake * 0.85;
+      const storageOk = peakStorage < storageCap * 0.85;
+      const storageWarn = !storageOk && peakStorage < storageCap;
+      const overallOk = dryerOk && millOk && storageOk;
+      const marketEntries = Object.entries(CARICOM_WEIGHTS).map(([k, w]) => ({ country: k, tonnes: caricomTarget * w }));
+      const maxMarket = Math.max(...marketEntries.map(m => m.tonnes));
+
+      return (
+        <div style={{ minHeight: "100vh", background: "#0a1208", color: "#f0e6c8", opacity: animated ? 1 : 0, transition: "opacity 0.5s ease", paddingBottom: 60 }}>
+
+          {/* Header */}
+          <div style={{ background: "linear-gradient(180deg,#0d1f0a 0%,#0a1208 100%)", borderBottom: "1px solid #1e2d1a", padding: "24px 32px 20px" }}>
+            <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", maxWidth: 1400, margin: "0 auto", flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 10, letterSpacing: "0.22em", color: "#5a7a48", fontFamily: "'DM Mono', monospace", marginBottom: 4, textTransform: "uppercase" }}>Guyana · Rice Processing Plant</div>
+                <h1 style={{ fontSize: 26, fontWeight: 800, color: "#f0e6c8", letterSpacing: "-0.03em" }}>🌾 Processing Control System</h1>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {[["DRYER", dryerOk], ["MILL", millOk], ["STORAGE", storageOk]].map(([lbl, ok]) => (
+                  <div key={lbl} style={{ background: ok ? "#0d2210" : "#220d0d", border: `1px solid ${ok ? "#2a5c18" : "#5c1818"}`, borderRadius: 4, padding: "4px 10px", fontSize: 10, fontFamily: "'DM Mono', monospace", color: ok ? "#7ab648" : "#e05c5c", letterSpacing: "0.1em" }}>
+                    {ok ? "●" : "○"} {lbl}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Body */}
+          <div style={{ maxWidth: 1400, margin: "0 auto", padding: "0 24px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 28, marginTop: 28 }}>
+
+              {/* Sidebar */}
+              <div>
+                <div style={{ background: "#0d180a", border: "1px solid #1e2d1a", borderRadius: 10, padding: "20px 18px", position: "sticky", top: 20 }}>
+                  <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.18em", color: "#7ab648", fontFamily: "'DM Mono', monospace", marginBottom: 20, fontWeight: 700 }}>⚙ Scenario Controls</div>
+
+                  <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.14em", color: "#4a6a38", marginBottom: 12, fontFamily: "'DM Mono', monospace" }}>— Capacity</div>
+                  <Slider label="Dryer Lines" min={1} max={4} step={1} value={dryerLines} onChange={setDryerLines} unit="" />
+                  <Slider label="Mill TPH" min={10} max={25} step={1} value={millTph} onChange={setMillTph} unit=" t/h" color="#e8b84b" />
+                  <Slider label="Mill Hours/Day" min={12} max={24} step={1} value={millHours} onChange={setMillHours} unit=" h" color="#e8b84b" />
+                  <Slider label="Storage Cap" min={40000} max={100000} step={5000} value={storageCap} onChange={setStorageCap} unit=" t" color="#5cc8c8" />
+
+                  <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.14em", color: "#4a6a38", margin: "16px 0 12px", fontFamily: "'DM Mono', monospace" }}>— Intake</div>
+                  <Slider label="Intake Multiple" min={0.5} max={2.0} step={0.05} value={intakeFactor} onChange={setIntakeFactor} unit="×" />
+                  <Slider label="CARICOM Share" min={0.40} max={1.0} step={0.05} value={caricomShare} onChange={setCaricomShare} unit="%" color="#c87ae8" />
+
+                  <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.14em", color: "#4a6a38", margin: "16px 0 12px", fontFamily: "'DM Mono', monospace" }}>— Pricing ($/t)</div>
+                  <Slider label="Paddy Price" min={150} max={600} step={5} value={paddyPrice} onChange={setPaddyPrice} unit="" color="#e87a5c" />
+                  <Slider label="Head Rice Price" min={400} max={1200} step={10} value={ricePrice} onChange={setRicePrice} unit="" color="#7ab648" />
+                  <Slider label="Brokens Price" min={200} max={800} step={10} value={brokensPrice} onChange={setBrokensPrice} unit="" color="#e8b84b" />
+                </div>
+              </div>
+
+              {/* Main */}
+              <div>
+                <SectionTitle>Production Targets</SectionTitle>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
+                  <Metric label="Daily Intake" value={`${dailyIntake.toLocaleString(undefined,{maximumFractionDigits:0})} t`} sub={`${((intakeFactor-1)*100).toFixed(0)}% vs baseline`} status={intakeFactor >= 1 ? "ok" : "warn"} />
+                  <Metric label="Annual Paddy" value={`${(annualIntake/1000).toFixed(0)}K t`} sub={`${annualIntake.toLocaleString()} tonnes`} />
+                  <Metric label="Head Rice Output" value={`${(headRice/1000).toFixed(1)}K t`} sub={`${(BASE.yield_head*100).toFixed(0)}% milling yield`} status="ok" />
+                  <Metric label="CARICOM Target" value={`${(caricomTarget/1000).toFixed(1)}K t`} sub={`${(caricomShare*100).toFixed(0)}% of head rice`} status="ok" />
+                </div>
+
+                <SectionTitle>Capacity Overview</SectionTitle>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
+                  <Metric label="Dryer Capacity" value={`${dryerCap.toLocaleString()} t/d`} sub={`${(dryerCap/dailyIntake*100).toFixed(0)}% of daily intake`} status={dryerOk ? "ok" : "bad"} />
+                  <Metric label="Mill Output/Day" value={`${millCapDay.toLocaleString()} t/d`} sub={`${(millCapYear/1000).toFixed(0)}K t/year capacity`} status={millOk ? "ok" : "bad"} />
+                  <Metric label="Storage Capacity" value={`${(storageCap/1000).toFixed(0)}K t`} sub={`Peak demand: ${(peakStorage/1000).toFixed(0)}K t`} status={storageOk ? "ok" : storageWarn ? "warn" : "bad"} />
+                  <Metric label="Days to Clear Peak" value={`${daysToProcess.toFixed(0)} days`} sub={`At ${millTph}t/h, ${millHours}h/day`} status={daysToProcess < 45 ? "ok" : "warn"} />
+                </div>
+
+                <SectionTitle>Unit Economics — per tonne of paddy</SectionTitle>
+                <div style={{ background: "#0d180a", border: "1px solid #1e2d1a", borderRadius: 10, padding: "18px 20px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 10, marginBottom: 14 }}>
+                    <Metric label="Paddy Cost" value={`$${paddyPrice}`} sub="input" />
+                    <Metric label="Head Rice Rev" value={`$${revenueHead.toFixed(0)}`} sub={`${(BASE.yield_head*100).toFixed(0)}% × $${ricePrice}`} status="ok" />
+                    <Metric label="Brokens Rev" value={`$${revenueBrokens.toFixed(0)}`} sub={`${(BASE.yield_brokens*100).toFixed(0)}% × $${brokensPrice}`} status="ok" />
+                    <Metric label="Total Revenue" value={`$${totalRevenue.toFixed(0)}`} sub="head + brokens" status="ok" />
+                    <Metric label="Net Margin" value={`$${margin.toFixed(0)}`} sub={`${marginPct.toFixed(1)}% return`} status={margin > 100 ? "ok" : margin > 0 ? "warn" : "bad"} />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, color: "#5a7a48", fontFamily: "'DM Mono', monospace", textTransform: "uppercase", letterSpacing: "0.1em" }}>Margin waterfall</span>
+                    <span style={{ fontSize: 10, color: "#94a87a", fontFamily: "'DM Mono', monospace" }}>
+                      Revenue: ${totalRevenue.toFixed(0)} — Cost: ${(paddyPrice + BASE.processing_cost).toFixed(0)} = <span style={{ color: margin >= 0 ? "#7ab648" : "#e05c5c", fontWeight: 700 }}>${margin.toFixed(0)}</span>
+                    </span>
+                  </div>
+                  <div style={{ height: 10, background: "#1a2a14", borderRadius: 5, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${Math.min(Math.max((margin/totalRevenue)*100,0),100)}%`, background: margin >= 0 ? "#7ab648" : "#e05c5c", borderRadius: 5, transition: "width 0.3s" }} />
+                  </div>
+                </div>
+
+                <SectionTitle>Annual Revenue Impact</SectionTitle>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                  <Metric label="Annual Head Rice Rev" value={`$${(headRice*ricePrice/1e6).toFixed(1)}M`} sub={`${(headRice/1000).toFixed(0)}K t × $${ricePrice}/t`} status="ok" />
+                  <Metric label="Annual Brokens Rev" value={`$${(brokens*brokensPrice/1e6).toFixed(1)}M`} sub={`${(brokens/1000).toFixed(0)}K t × $${brokensPrice}/t`} status="ok" />
+                  <Metric label="Total Annual Revenue" value={`$${((headRice*ricePrice+brokens*brokensPrice)/1e6).toFixed(1)}M`} sub={`Net: $${(margin*annualIntake/1e6).toFixed(1)}M`} status={margin > 0 ? "ok" : "bad"} />
+                </div>
+
+                <SectionTitle>CARICOM Market Allocation</SectionTitle>
+                <div style={{ background: "#0d180a", border: "1px solid #1e2d1a", borderRadius: 10, padding: "18px 20px" }}>
+                  <div style={{ marginBottom: 12, fontSize: 11, color: "#5a7a48", fontFamily: "'DM Mono', monospace" }}>
+                    Total CARICOM allocation: {caricomTarget.toLocaleString(undefined,{maximumFractionDigits:0})} t ({(caricomShare*100).toFixed(0)}% of head rice)
+                  </div>
+                  {marketEntries.map(({ country, tonnes }) => (
+                    <BarRow key={country} label={country} value={Math.round(tonnes)} max={maxMarket * 1.1} color="#7ab648" suffix=" t" />
+                  ))}
+                </div>
+
+                <SectionTitle>By-product Flows</SectionTitle>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                  <Metric label="Bran" value={`${(bran/1000).toFixed(1)}K t`} sub={`${(BASE.yield_bran*100).toFixed(0)}% of paddy`} />
+                  <Metric label="Brokens" value={`${(brokens/1000).toFixed(1)}K t`} sub={`${(BASE.yield_brokens*100).toFixed(0)}% of paddy`} />
+                  <Metric label="Total By-products" value={`${((bran+brokens)/1000).toFixed(1)}K t`} sub="bran + brokens" />
+                </div>
+
+                <SectionTitle>Storage Pressure Test</SectionTitle>
+                <div style={{ background: "#0d180a", border: "1px solid #1e2d1a", borderRadius: 10, padding: "18px 20px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 12 }}>
+                    <Metric label="Est. Peak Storage" value={`${(peakStorage/1000).toFixed(0)}K t`} sub="40% of annual paddy" />
+                    <Metric label="Storage Available" value={`${(storageCap/1000).toFixed(0)}K t`} />
+                    <Metric label="% Capacity Used" value={`${storagePct.toFixed(0)}%`} status={storagePct < 85 ? "ok" : storagePct < 100 ? "warn" : "bad"} />
+                  </div>
+                  <div style={{ height: 12, background: "#1a2a14", borderRadius: 6, overflow: "hidden", marginBottom: 8 }}>
+                    <div style={{ height: "100%", width: `${Math.min(storagePct,100)}%`, background: storagePct < 70 ? "#7ab648" : storagePct < 85 ? "#e8b84b" : "#e05c5c", borderRadius: 6, transition: "width 0.3s, background 0.3s" }} />
+                  </div>
+                  <StatusBadge ok={storageOk} warn={!storageOk && storageWarn} msg={storageOk ? "Storage sizing OK — within safe limits" : storageWarn ? "Storage near capacity — monitor closely" : "OVERCAPACITY — Add silos!"} />
+                </div>
+
+                <SectionTitle>System Balance Check</SectionTitle>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                  <StatusBadge ok={dryerOk} warn={false} msg={dryerOk ? `Dryer OK — ${dryerCap.toLocaleString()} t/day` : "Dryer undersized — add lines"} />
+                  <StatusBadge ok={millOk} warn={false} msg={millOk ? `Mill OK — ${(millCapYear/1000).toFixed(0)}K t/year` : "Mill undercapacity"} />
+                  <StatusBadge ok={overallOk} warn={!overallOk && (dryerOk || millOk || storageOk)} msg={overallOk ? "All systems balanced ✓" : "Adjust parameters to balance plant"} />
+                </div>
+
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
