@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🌾 Rice Intake Scheduler</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0a1208; color: #f0e6c8; font-family: 'Syne', sans-serif; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; background: #0a1208; }
+    ::-webkit-scrollbar-thumb { background: #2a3d22; border-radius: 3px; }
+    input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: transparent; cursor: pointer; position: absolute; top: -6px; left: 0; opacity: 0; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #7ab648; cursor: pointer; border: 2px solid #0a1208; }
+    input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #7ab648; cursor: pointer; border: 2px solid #0a1208; }
+    input[type=text], input[type=number] { background: #111d0e; border: 1px solid #2a3d22; color: #f0e6c8; border-radius: 4px; padding: 6px 10px; font-family: 'DM Mono', monospace; font-size: 12px; width: 100%; outline: none; }
+    input[type=text]:focus, input[type=number]:focus { border-color: #7ab648; }
+    button { cursor: pointer; font-family: 'DM Mono', monospace; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { useState, useMemo, useCallback } = React;
+
+  const COLORS = ['#7ab648','#e8b84b','#5cc8c8','#c87ae8','#e87a5c','#5c8ce8','#e85c9c','#48c87a','#c8a848','#48c8e8','#e8485c','#a8c848'];
+
+  const INIT_FARMERS = [
+    {id:1,name:'Ramsingh',   tons:10,region:'Essequibo'},
+    {id:2,name:'Persaud',    tons:12,region:'Berbice'},
+    {id:3,name:'Basdeo',     tons:8, region:'Demerara'},
+    {id:4,name:'Chanderpaul',tons:11,region:'Essequibo'},
+    {id:5,name:'Sookdeo',    tons:9, region:'Berbice'},
+    {id:6,name:'Bharat',     tons:10,region:'Demerara'},
+    {id:7,name:'Mohan',      tons:12,region:'Essequibo'},
+    {id:8,name:'Toolsie',    tons:8, region:'Berbice'},
+  ];
+
+  function fmtHour(h) {
+    const n = h % 24;
+    if (n === 0) return 'Midnight';
+    if (n < 12) return `${n}am`;
+    if (n === 12) return '12pm';
+    return `${n-12}pm`;
+  }
+
+  function fmtTime(slotIdx, startHour, slotDur) {
+    const total = startHour * 60 + slotIdx * slotDur;
+    const h = Math.floor(total / 60) % 24;
+    const m = total % 60;
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  }
+
+  const akey = (d,p,s) => `${d}-${p}-${s}`;
+
+  // ── Shared Components ──────────────────────────────────────────────
+
+  function Slider({ label, min, max, step, value, onChange, unit='', color='#7ab648', fmt }) {
+    const disp = fmt ? fmt(value) : (value%1!==0 ? value.toFixed(1) : value.toLocaleString());
+    return (
+      <div style={{marginBottom:16}}>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+          <span style={{fontSize:10,textTransform:'uppercase',letterSpacing:'0.12em',color:'#94a87a',fontFamily:"'DM Mono'"}}>{label}</span>
+          <span style={{fontSize:12,fontWeight:700,color:'#f0e6c8',fontFamily:"'DM Mono'"}}>{disp}{unit}</span>
+        </div>
+        <div style={{position:'relative',height:6,background:'#1e2d1a',borderRadius:3}}>
+          <div style={{position:'absolute',left:0,top:0,height:'100%',width:`${((value-min)/(max-min))*100}%`,background:color,borderRadius:3,transition:'width 0.1s'}}/>
+          <input type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(+e.target.value)}/>
+        </div>
+      </div>
+    );
+  }
+
+  function Card({ label, value, sub, status }) {
+    const sc = status==='ok'?'#7ab648':status==='warn'?'#e8b84b':status==='bad'?'#e05c5c':'#94a87a';
+    return (
+      <div style={{background:'#111d0e',border:'1px solid #2a3d22',borderRadius:8,padding:'13px 15px'}}>
+        <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.14em',color:'#5a7a48',marginBottom:5,fontFamily:"'DM Mono'"}}>{label}</div>
+        <div style={{fontSize:19,fontWeight:800,color:'#f0e6c8',letterSpacing:'-0.02em',lineHeight:1.1}}>{value}</div>
+        {sub && <div style={{fontSize:10,color:sc,marginTop:3,fontFamily:"'DM Mono'"}}>{sub}</div>}
+      </div>
+    );
+  }
+
+  function SecTitle({ children }) {
+    return (
+      <div style={{display:'flex',alignItems:'center',gap:10,margin:'22px 0 12px'}}>
+        <div style={{height:2,width:16,background:'#7ab648'}}/>
+        <span style={{fontSize:10,textTransform:'uppercase',letterSpacing:'0.18em',color:'#7ab648',fontFamily:"'DM Mono'",fontWeight:700}}>{children}</span>
+        <div style={{flex:1,height:1,background:'#1e2d1a'}}/>
+      </div>
+    );
+  }
+
+  function Badge({ ok, warn, msg }) {
+    const bg=ok?'#0d2210':warn?'#221a06':'#220d0d';
+    const bc=ok?'#2a5c18':warn?'#5c4018':'#5c1818';
+    const c=ok?'#7ab648':warn?'#e8b84b':'#e05c5c';
+    return (
+      <div style={{background:bg,border:`1px solid ${bc}`,borderRadius:6,padding:'9px 13px',display:'flex',alignItems:'center',gap:8}}>
+        <span style={{color:c,fontSize:13,fontWeight:700}}>{ok?'✓':warn?'⚠':'✕'}</span>
+        <span style={{color:c,fontSize:11,fontFamily:"'DM Mono'"}}>{msg}</span>
+      </div>
+    );
+  }
+
+  function Tab({ active, onClick, children }) {
+    return (
+      <button onClick={onClick} style={{
+        padding:'7px 16px',fontSize:11,fontFamily:"'DM Mono'",textTransform:'uppercase',letterSpacing:'0.1em',
+        background:active?'#111d0e':'transparent',color:active?'#7ab648':'#5a7a48',
+        border:active?'1px solid #2a3d22':'1px solid transparent',
+        borderBottom:active?'1px solid #111d0e':'none',
+        borderRadius:'5px 5px 0 0',cursor:'pointer',marginBottom:-1,transition:'all 0.15s'
+      }}>{children}</button>
+    );
+  }
+
+  // ── Schedule Grid ─────────────────────────────────────────────────
+
+  function Grid({ numPits, slotsPerPit, day, assignments, farmerMap, selectedFarmer, onSlotClick, startHour, slotDur }) {
+    const SW = 34, SH = 28, LW = 58;
+
+    const markers = useMemo(() => {
+      const m = [];
+      for (let s = 0; s < slotsPerPit; s++) {
+        const total = startHour * 60 + s * slotDur;
+        if (total % 60 < slotDur) m.push({ s, label: fmtHour(Math.floor(total/60) % 24) });
+      }
+      return m;
+    }, [slotsPerPit, startHour, slotDur]);
+
+    return (
+      <div style={{overflowX:'auto',paddingBottom:6}}>
+        <div style={{minWidth: LW + slotsPerPit*SW, fontFamily:"'DM Mono'"}}>
+          {/* Hour markers */}
+          <div style={{paddingLeft:LW,position:'relative',height:20,marginBottom:4}}>
+            {markers.map(m => (
+              <div key={m.s} style={{position:'absolute',left:LW+m.s*SW,fontSize:9,color:'#5a7a48',borderLeft:'1px solid #2a3d22',paddingLeft:3,lineHeight:'18px'}}>{m.label}</div>
+            ))}
+          </div>
+          {/* Pit rows */}
+          {Array.from({length:numPits},(_,pit) => (
+            <div key={pit} style={{display:'flex',alignItems:'center',marginBottom:4}}>
+              <div style={{width:LW,fontSize:10,color:'#94a87a',textAlign:'right',paddingRight:8,flexShrink:0,fontFamily:"'DM Mono'"}}>PIT {pit+1}</div>
+              <div style={{display:'flex',gap:2}}>
+                {Array.from({length:slotsPerPit},(_,slot) => {
+                  const a = assignments[akey(day,pit,slot)];
+                  const f = a ? farmerMap[a.farmerId] : null;
+                  const bg = !f ?'#131d0f': a.status==='completed'?'#0a2a0a': a.status==='rejected'?'#2a0a0a': f.color+'1e';
+                  const bc = !f ?'#1e2d1a': a.status==='completed'?'#3a8d3a': a.status==='rejected'?'#8d3a3a': f.color+'77';
+                  const tc = !f ?'#2a3d22': a.status==='completed'?'#3a8d3a': a.status==='rejected'?'#8d3a3a': f.color;
+                  const lbl = !f ?'': a.status==='completed'?'✓': a.status==='rejected'?'✕': f.name.slice(0,3).toUpperCase();
+                  const special = a?.status==='completed'||a?.status==='rejected';
+                  const hi = f && selectedFarmer && f.id===selectedFarmer.id;
+                  return (
+                    <div key={slot} onClick={()=>onSlotClick(pit,slot)}
+                      title={`${fmtTime(slot,startHour,slotDur)} — ${f?f.name+' ('+f.tons+'t)':'Empty'}`}
+                      style={{width:SW-2,height:SH,background:bg,border:`1px solid ${bc}`,borderRadius:3,cursor:'pointer',
+                        display:'flex',alignItems:'center',justifyContent:'center',
+                        fontSize:special?10:7,color:tc,fontWeight:700,letterSpacing:special?0:'-0.02em',
+                        outline:hi?`2px solid ${f.color}55`:special?`1px solid ${tc}`:undefined,outlineOffset:1,
+                        transition:'all 0.1s'}}>{lbl}</div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── App ────────────────────────────────────────────────────────────
+
+  function App() {
+    // Sliders
+    const [dailyTarget,  setDailyTarget]  = useState(1000);
+    const [seasonDays,   setSeasonDays]   = useState(60);
+    const [startHour,    setStartHour]    = useState(6);
+    const [opHours,      setOpHours]      = useState(16);
+    const [numPits,      setNumPits]      = useState(2);
+    const [truckLoad,    setTruckLoad]    = useState(10);
+    const [testTime,     setTestTime]     = useState(15);
+    const [dumpTime,     setDumpTime]     = useState(5);
+    const [rejRate,      setRejRate]      = useState(5);
+
+    // UI
+    const [tab,          setTab]          = useState('capacity');
+    const [day,          setDay]          = useState(1);
+    const [selFarmer,    setSelFarmer]    = useState(null);
+
+    // Farmers
+    const [farmers,  setFarmers]  = useState(() => INIT_FARMERS.map((f,i)=>({...f,color:COLORS[i%COLORS.length]})));
+    const [nName,    setNName]    = useState('');
+    const [nTons,    setNTons]    = useState(10);
+    const [nRegion,  setNRegion]  = useState('');
+    const [nextId,   setNextId]   = useState(9);
+
+    // Schedule
+    const [assignments, setAssignments] = useState({});
+
+    // ── Derived ──
+    const endHour    = Math.min(startHour + opHours, 24);
+    const slotDur    = testTime + dumpTime;
+    const opMins     = (endHour - startHour) * 60;
+    const slotsPerPit= Math.max(1, Math.floor(opMins / slotDur));
+    const totalSlots = slotsPerPit * numPits;
+    const effRate    = 1 - rejRate/100;
+    const trucksNeed = Math.ceil(dailyTarget / (truckLoad * effRate));
+    const maxCap     = Math.round(totalSlots * truckLoad * effRate);
+    const canHit     = totalSlots >= trucksNeed;
+
+    const farmerMap  = useMemo(() => { const m={}; farmers.forEach(f=>m[f.id]=f); return m; }, [farmers]);
+
+    // Assignment helpers
+    const setSlot = useCallback((d,p,s,fid,status='assigned') => {
+      setAssignments(prev => {
+        const k=akey(d,p,s), next={...prev};
+        if(fid===null) { delete next[k]; } else { next[k]={farmerId:fid,status}; }
+        return next;
+      });
+    },[]);
+
+    function handleSlot(pit, slot) {
+      const ex = assignments[akey(day,pit,slot)];
+      if(selFarmer) {
+        if(ex?.farmerId===selFarmer.id) setSlot(day,pit,slot,null);
+        else setSlot(day,pit,slot,selFarmer.id);
+      } else if(ex) {
+        const cyc={assigned:'completed',completed:'rejected',rejected:null};
+        const nxt=cyc[ex.status];
+        if(nxt) setSlot(day,pit,slot,ex.farmerId,nxt);
+        else setSlot(day,pit,slot,null);
+      }
+    }
+
+    function autoFill() {
+      if(!farmers.length) return;
+      const upd={}; let fi=0;
+      for(let p=0;p<numPits;p++) for(let s=0;s<slotsPerPit;s++) {
+        const k=akey(day,p,s);
+        if(!assignments[k]) { upd[k]={farmerId:farmers[fi%farmers.length].id,status:'assigned'}; fi++; }
+      }
+      setAssignments(prev=>({...prev,...upd}));
+    }
+
+    function clearDay() {
+      setAssignments(prev=>{
+        const next={...prev};
+        for(let p=0;p<numPits;p++) for(let s=0;s<slotsPerPit;s++) delete next[akey(day,p,s)];
+        return next;
+      });
+    }
+
+    function addFarmer() {
+      if(!nName.trim()) return;
+      setFarmers(prev=>[...prev,{id:nextId,name:nName.trim(),tons:nTons,region:nRegion.trim()||'Unknown',color:COLORS[nextId%COLORS.length]}]);
+      setNextId(n=>n+1); setNName(''); setNRegion('');
+    }
+
+    function removeFarmer(id) {
+      setFarmers(prev=>prev.filter(f=>f.id!==id));
+      if(selFarmer?.id===id) setSelFarmer(null);
+    }
+
+    // Day stats
+    const dayStats = useMemo(()=>{
+      let assigned=0,completed=0,rejected=0;
+      for(let p=0;p<numPits;p++) for(let s=0;s<slotsPerPit;s++){
+        const a=assignments[akey(day,p,s)];
+        if(a?.status==='assigned')  assigned++;
+        if(a?.status==='completed') completed++;
+        if(a?.status==='rejected')  rejected++;
+      }
+      return {assigned,completed,rejected,total:assigned+completed+rejected};
+    },[assignments,day,numPits,slotsPerPit]);
+
+    const dayExpMT   = dayStats.assigned * truckLoad;
+    const dayFillPct = totalSlots ? Math.round(dayStats.total/totalSlots*100) : 0;
+
+    // Season stats
+    const seasonStats = useMemo(()=>{
+      const days=[];
+      for(let d=1;d<=seasonDays;d++){
+        let count=0;
+        for(let p=0;p<numPits;p++) for(let s=0;s<slotsPerPit;s++) if(assignments[akey(d,p,s)]) count++;
+        days.push({d,count,pct:totalSlots?count/totalSlots:0});
+      }
+      return {days,total:days.reduce((a,d)=>a+d.count,0)};
+    },[assignments,seasonDays,numPits,slotsPerPit,totalSlots]);
+
+    const seasonTarget = seasonDays * dailyTarget;
+    const seasonMT     = Math.round(seasonStats.total * truckLoad * effRate);
+
+    // Farmer slot counts
+    const farmerStats = useMemo(()=>{
+      const c={}; farmers.forEach(f=>{c[f.id]={slots:0,days:new Set()}});
+      Object.entries(assignments).forEach(([k,v])=>{
+        const d=k.split('-')[0];
+        if(c[v.farmerId]){c[v.farmerId].slots++;c[v.farmerId].days.add(d);}
+      });
+      return c;
+    },[assignments,farmers]);
+
+    // ── Render ────────────────────────────────────────────────────────
+    return (
+      <div style={{display:'flex',minHeight:'100vh',background:'#0a1208'}}>
+
+        {/* ── Sidebar ── */}
+        <div style={{width:265,flexShrink:0,background:'#0d180a',borderRight:'1px solid #1e2d1a',padding:'18px 14px',overflowY:'auto',position:'sticky',top:0,maxHeight:'100vh'}}>
+          <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.2em',color:'#5a7a48',fontFamily:"'DM Mono'",marginBottom:3}}>Guyana · Rice Plant</div>
+          <div style={{fontSize:16,fontWeight:800,color:'#f0e6c8',marginBottom:18,letterSpacing:'-0.02em'}}>🌾 Intake Scheduler</div>
+
+          <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.14em',color:'#4a6a38',fontFamily:"'DM Mono'",marginBottom:9}}>— Season</div>
+          <Slider label="Season Length" min={30} max={90} step={5} value={seasonDays} onChange={setSeasonDays} unit=" days"/>
+          <Slider label="Daily Target"  min={700} max={1200} step={50} value={dailyTarget} onChange={setDailyTarget} unit=" MT"/>
+
+          <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.14em',color:'#4a6a38',fontFamily:"'DM Mono'",margin:'12px 0 9px'}}>— Operations</div>
+          <Slider label="Start Hour"       min={0} max={12} step={1} value={startHour} onChange={setStartHour} color="#e8b84b" fmt={v=>fmtHour(v)}/>
+          <Slider label="Operating Hours"  min={8} max={24} step={1} value={opHours}   onChange={setOpHours}   color="#e8b84b" unit="h"/>
+          <Slider label="Avg Truck Load"   min={8} max={12} step={0.5} value={truckLoad} onChange={setTruckLoad} unit=" MT"/>
+          <Slider label="Test Time/Truck"  min={5} max={30} step={1} value={testTime}  onChange={setTestTime}  color="#5cc8c8" unit=" min"/>
+          <Slider label="Dump Time/Truck"  min={2} max={15} step={1} value={dumpTime}  onChange={setDumpTime}  color="#5cc8c8" unit=" min"/>
+          <Slider label="Rejection Rate"   min={0} max={25} step={1} value={rejRate}   onChange={setRejRate}   color="#e87a5c" unit="%"/>
+
+          <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.14em',color:'#4a6a38',fontFamily:"'DM Mono'",margin:'12px 0 9px'}}>— Equipment</div>
+          <Slider label="Intake Pits" min={1} max={6} step={1} value={numPits} onChange={setNumPits} color="#c87ae8"/>
+
+          {/* Quick stats panel */}
+          <div style={{marginTop:14,background:'#111d0e',border:'1px solid #1e2d1a',borderRadius:8,padding:'11px 13px'}}>
+            <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.14em',color:'#5a7a48',fontFamily:"'DM Mono'",marginBottom:7}}>Quick Stats</div>
+            {[
+              [`${slotDur} min/truck slot`, null],
+              [`${slotsPerPit} slots per pit`, null],
+              [`${totalSlots} total slots/day`, null],
+              [`${fmtHour(startHour)} → ${fmtHour(endHour)}`, null],
+              [`${maxCap} MT max capacity`, canHit?'ok':'bad'],
+            ].map(([lbl,s])=>(
+              <div key={lbl} style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                <span style={{fontSize:10,color:s==='ok'?'#7ab648':s==='bad'?'#e05c5c':'#94a87a',fontFamily:"'DM Mono'"}}>{lbl}</span>
+                {s==='ok'&&<span style={{color:'#7ab648',fontSize:10}}>✓</span>}
+                {s==='bad'&&<span style={{color:'#e05c5c',fontSize:10}}>✕</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Main ── */}
+        <div style={{flex:1,padding:'22px 26px 60px',overflowY:'auto'}}>
+
+          {/* Tabs */}
+          <div style={{display:'flex',gap:4,borderBottom:'1px solid #2a3d22',marginBottom:20}}>
+            {[['capacity','📊 Capacity'],['planner','📅 Day Planner'],['farmers','👤 Suppliers'],['season','🗓 Season']].map(([id,lbl])=>(
+              <Tab key={id} active={tab===id} onClick={()=>setTab(id)}>{lbl}</Tab>
+            ))}
+          </div>
+
+          {/* ── CAPACITY TAB ── */}
+          {tab==='capacity' && (
+            <div>
+              <SecTitle>Daily Target Check</SecTitle>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:10}}>
+                <Card label="Daily Target"        value={`${dailyTarget} MT`}   sub="required intake" />
+                <Card label="Max Daily Output"    value={`${maxCap} MT`}        sub={`${totalSlots} slots × ${truckLoad}t × ${100-rejRate}%`} status={canHit?'ok':'bad'}/>
+                <Card label="Trucks Needed/Day"   value={trucksNeed}             sub={`with ${rejRate}% rejection buffer`}/>
+                <Card label="Slots Available/Day" value={totalSlots}             sub={`${numPits} pit${numPits>1?'s':''} × ${slotsPerPit} slots`} status={canHit?'ok':'bad'}/>
+              </div>
+              <Badge ok={canHit} warn={false} msg={canHit ? `Target achievable — ${totalSlots-trucksNeed} spare slots per day` : `Need ${trucksNeed-totalSlots} more slots/day — add pits, extend hours, or cut test time`}/>
+
+              <SecTitle>Slot Breakdown</SecTitle>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+                <Card label="Slot Duration"     value={`${slotDur} min`}            sub={`${testTime}m test + ${dumpTime}m dump`}/>
+                <Card label="Slots Per Pit"     value={slotsPerPit}                  sub={`in ${opHours}h window`}/>
+                <Card label="Operating Window"  value={`${fmtHour(startHour)}–${fmtHour(endHour)}`} sub={`${opHours} hours / day`}/>
+              </div>
+
+              <SecTitle>Bottleneck Analysis</SecTitle>
+              {[
+                { lbl:'Weighbridge + Testing', impact:testTime>20?'high':testTime>12?'med':'low', note:`${testTime} min per truck. Cutting 5 min adds ~${Math.floor(opMins/(slotDur-5))*numPits - totalSlots} slots/day` },
+                { lbl:'Number of intake pits', impact:numPits<2?'high':numPits<3?'med':'low', note:`+1 pit = +${slotsPerPit} slots (+${Math.round(slotsPerPit*truckLoad*effRate)} MT/day)` },
+                { lbl:'Operating hours', impact:opHours<14?'high':opHours<18?'med':'low', note:`+1 hour = ~${Math.floor(60/slotDur)*numPits} slots (+${Math.round(Math.floor(60/slotDur)*numPits*truckLoad*effRate)} MT)` },
+                { lbl:'Truck rejection rate', impact:rejRate>10?'high':rejRate>5?'med':'low', note:`${rejRate}% rejection wastes ~${Math.round(totalSlots*truckLoad*(rejRate/100))} MT/day of capacity` },
+              ].map(b=>(
+                <div key={b.lbl} style={{display:'flex',alignItems:'center',gap:12,marginBottom:8,background:'#111d0e',border:'1px solid #1e2d1a',borderRadius:6,padding:'10px 14px'}}>
+                  <div style={{width:10,height:10,borderRadius:'50%',flexShrink:0,background:b.impact==='high'?'#e05c5c':b.impact==='med'?'#e8b84b':'#7ab648'}}/>
+                  <span style={{fontSize:12,fontWeight:700,color:'#f0e6c8',width:180,flexShrink:0}}>{b.lbl}</span>
+                  <span style={{fontSize:11,color:'#94a87a',fontFamily:"'DM Mono'"}}>{b.note}</span>
+                </div>
+              ))}
+
+              <SecTitle>Season Projection</SecTitle>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+                <Card label="Season Target"      value={`${(seasonTarget/1000).toFixed(0)}K MT`} sub={`${seasonDays} days × ${dailyTarget} MT`}/>
+                <Card label="Max Season Output"  value={`${(seasonDays*maxCap/1000).toFixed(0)}K MT`} sub="at 100% slot fill" status={seasonDays*maxCap>=seasonTarget?'ok':'bad'}/>
+                <Card label="Scheduled So Far"   value={`${(seasonMT/1000).toFixed(1)}K MT`}          sub={`${Math.round(seasonMT/seasonTarget*100)}% of season target`} status={seasonMT>0?'ok':''}/>
+              </div>
+            </div>
+          )}
+
+          {/* ── DAY PLANNER TAB ── */}
+          {tab==='planner' && (
+            <div>
+              {/* Day nav */}
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}>
+                <button onClick={()=>setDay(d=>Math.max(1,d-1))} style={{background:'#111d0e',border:'1px solid #2a3d22',color:'#7ab648',borderRadius:4,padding:'4px 12px',fontSize:14}}>←</button>
+                <div style={{flex:1}}><Slider label="Day" min={1} max={seasonDays} step={1} value={day} onChange={setDay} unit={` of ${seasonDays}`}/></div>
+                <button onClick={()=>setDay(d=>Math.min(seasonDays,d+1))} style={{background:'#111d0e',border:'1px solid #2a3d22',color:'#7ab648',borderRadius:4,padding:'4px 12px',fontSize:14}}>→</button>
+              </div>
+
+              {/* Day stats */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:8,marginBottom:12}}>
+                <Card label="Day"            value={`Day ${day}`}             sub={`of ${seasonDays}`}/>
+                <Card label="Slots Filled"   value={`${dayStats.total}/${totalSlots}`} sub={`${dayFillPct}% scheduled`} status={dayFillPct>85?'ok':dayFillPct>50?'warn':'bad'}/>
+                <Card label="Expected MT"    value={`${dayExpMT} MT`}         sub={`${Math.round(dayExpMT/dailyTarget*100)}% of target`} status={dayExpMT>=dailyTarget?'ok':dayExpMT>dailyTarget*0.8?'warn':'bad'}/>
+                <Card label="Completed"      value={dayStats.completed}       sub="deliveries done" status={dayStats.completed>0?'ok':''}/>
+                <Card label="Rejected"       value={dayStats.rejected}        sub="trucks turned away" status={dayStats.rejected>3?'bad':''}/>
+              </div>
+
+              {/* How-to */}
+              <div style={{background:'#111d0e',border:'1px solid #1e2d1a',borderRadius:6,padding:'8px 14px',marginBottom:12,fontSize:11,color:'#5a7a48',fontFamily:"'DM Mono'",display:'flex',gap:20,flexWrap:'wrap'}}>
+                <span>① Pick a supplier below</span>
+                <span>② Click slots to assign</span>
+                <span>③ No supplier selected: click slot to cycle assigned → ✓ completed → ✕ rejected → empty</span>
+              </div>
+
+              {/* Supplier picker */}
+              <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:12}}>
+                {farmers.map(f=>(
+                  <button key={f.id} onClick={()=>setSelFarmer(prev=>prev?.id===f.id?null:f)}
+                    style={{padding:'5px 12px',borderRadius:20,fontSize:11,fontFamily:"'DM Mono'",cursor:'pointer',
+                      background:selFarmer?.id===f.id?f.color+'2a':'#111d0e',
+                      border:`1px solid ${selFarmer?.id===f.id?f.color:'#2a3d22'}`,
+                      color:selFarmer?.id===f.id?f.color:'#94a87a',transition:'all 0.15s'}}>
+                    {f.name} <span style={{opacity:0.6}}>({f.tons}t)</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Grid */}
+              <div style={{background:'#0d180a',border:'1px solid #1e2d1a',borderRadius:10,padding:'14px 12px',marginBottom:12}}>
+                <Grid numPits={numPits} slotsPerPit={slotsPerPit} day={day}
+                  assignments={assignments} farmerMap={farmerMap}
+                  selectedFarmer={selFarmer} onSlotClick={handleSlot}
+                  startHour={startHour} slotDur={slotDur}/>
+              </div>
+
+              {/* Actions */}
+              <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+                <button onClick={autoFill} style={{padding:'8px 18px',background:'#0d2210',border:'1px solid #2a5c18',color:'#7ab648',borderRadius:6,fontSize:11,letterSpacing:'0.08em'}}>⚡ Auto-fill Empty Slots</button>
+                <button onClick={clearDay} style={{padding:'8px 18px',background:'#220d0d',border:'1px solid #5c1818',color:'#e05c5c',borderRadius:6,fontSize:11,letterSpacing:'0.08em'}}>✕ Clear Day {day}</button>
+              </div>
+            </div>
+          )}
+
+          {/* ── SUPPLIERS TAB ── */}
+          {tab==='farmers' && (
+            <div>
+              <SecTitle>Add Supplier</SecTitle>
+              <div style={{background:'#0d180a',border:'1px solid #1e2d1a',borderRadius:10,padding:'14px',marginBottom:20}}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 90px 130px auto',gap:10,alignItems:'end'}}>
+                  <div>
+                    <div style={{fontSize:9,color:'#5a7a48',fontFamily:"'DM Mono'",textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:4}}>Supplier / Farmer Name</div>
+                    <input type="text" value={nName} onChange={e=>setNName(e.target.value)} placeholder="e.g. Ramkhelawan" onKeyDown={e=>e.key==='Enter'&&addFarmer()}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9,color:'#5a7a48',fontFamily:"'DM Mono'",textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:4}}>MT/Load</div>
+                    <input type="number" value={nTons} onChange={e=>setNTons(+e.target.value)} min={8} max={12}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9,color:'#5a7a48',fontFamily:"'DM Mono'",textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:4}}>Region</div>
+                    <input type="text" value={nRegion} onChange={e=>setNRegion(e.target.value)} placeholder="e.g. Berbice"/>
+                  </div>
+                  <button onClick={addFarmer} style={{padding:'0 18px',height:34,background:'#0d2210',border:'1px solid #2a5c18',color:'#7ab648',borderRadius:6,fontSize:12}}>+ Add</button>
+                </div>
+              </div>
+
+              <SecTitle>Supplier Roster ({farmers.length})</SecTitle>
+              <div style={{display:'grid',gap:8}}>
+                {farmers.map(f=>{
+                  const st=farmerStats[f.id]||{slots:0,days:new Set()};
+                  return (
+                    <div key={f.id} style={{background:'#111d0e',border:'1px solid #2a3d22',borderRadius:8,padding:'11px 15px',display:'flex',alignItems:'center',gap:12}}>
+                      <div style={{width:10,height:10,borderRadius:'50%',background:f.color,flexShrink:0}}/>
+                      <div style={{flex:1}}>
+                        <div style={{fontWeight:700,fontSize:14,color:'#f0e6c8'}}>{f.name}</div>
+                        <div style={{fontSize:10,color:'#5a7a48',fontFamily:"'DM Mono'"}}>{f.region} · {f.tons}t per load</div>
+                      </div>
+                      {[['SLOTS', st.slots, f.color], ['DELIVERIES (MT)', st.slots*f.tons, '#f0e6c8'], ['DAYS', st.days.size, '#94a87a']].map(([lbl,val,c])=>(
+                        <div key={lbl} style={{textAlign:'center',minWidth:72}}>
+                          <div style={{fontSize:15,fontWeight:700,color:c}}>{val.toLocaleString()}</div>
+                          <div style={{fontSize:8,color:'#5a7a48',fontFamily:"'DM Mono'",letterSpacing:'0.1em'}}>{lbl}</div>
+                        </div>
+                      ))}
+                      <button onClick={()=>removeFarmer(f.id)} style={{background:'none',border:'1px solid #3a2020',color:'#6a3a3a',borderRadius:4,padding:'3px 8px',fontSize:11}}>✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── SEASON TAB ── */}
+          {tab==='season' && (
+            <div>
+              <SecTitle>Season Summary</SecTitle>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:14}}>
+                <Card label="Season Target"    value={`${(seasonTarget/1000).toFixed(0)}K MT`} sub={`${seasonDays} days × ${dailyTarget} MT`}/>
+                <Card label="Planned Intake"   value={`${(seasonMT/1000).toFixed(1)}K MT`} sub={`${Math.round(seasonMT/seasonTarget*100)}% of target`} status={seasonMT>=seasonTarget?'ok':seasonMT>seasonTarget*0.5?'warn':'bad'}/>
+                <Card label="Days Scheduled"   value={`${seasonStats.days.filter(d=>d.count>0).length} / ${seasonDays}`} sub="with at least 1 truck booked" status={seasonStats.days.filter(d=>d.count>0).length===seasonDays?'ok':'warn'}/>
+              </div>
+
+              {/* Season progress bar */}
+              <div style={{background:'#0d180a',border:'1px solid #1e2d1a',borderRadius:10,padding:'14px',marginBottom:14}}>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
+                  <span style={{fontSize:10,color:'#5a7a48',fontFamily:"'DM Mono'",textTransform:'uppercase',letterSpacing:'0.1em'}}>Season progress</span>
+                  <span style={{fontSize:11,color:'#94a87a',fontFamily:"'DM Mono'"}}>{(seasonMT/1000).toFixed(1)}K of {(seasonTarget/1000).toFixed(0)}K MT planned</span>
+                </div>
+                <div style={{height:12,background:'#1a2a14',borderRadius:6,overflow:'hidden'}}>
+                  <div style={{height:'100%',width:`${Math.min(seasonMT/seasonTarget*100,100)}%`,background:'#7ab648',borderRadius:6,transition:'width 0.4s'}}/>
+                </div>
+              </div>
+
+              {/* Day grid */}
+              <div style={{background:'#0d180a',border:'1px solid #1e2d1a',borderRadius:10,padding:'16px'}}>
+                <div style={{fontSize:10,color:'#5a7a48',fontFamily:"'DM Mono'",textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:12}}>
+                  Day-by-day fill rate — click any day to open in planner
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(10,1fr)',gap:5}}>
+                  {seasonStats.days.map(d=>{
+                    const p=d.pct;
+                    const bg=p===0?'#131d0f':p<0.5?'#2a1a08':p<0.85?'#2a2208':'#0d2a0d';
+                    const bc=p===0?'#1e2d1a':p<0.5?'#5c3018':p<0.85?'#5c5018':'#2a6a2a';
+                    const c=p===0?'#2a3d22':p<0.5?'#e87a5c':p<0.85?'#e8b84b':'#7ab648';
+                    return (
+                      <div key={d.d} onClick={()=>{setDay(d.d);setTab('planner');}}
+                        title={`Day ${d.d}: ${d.count} slots filled (${Math.round(p*100)}% of ${totalSlots})`}
+                        style={{background:bg,border:`1px solid ${bc}`,borderRadius:4,padding:'6px 3px',textAlign:'center',cursor:'pointer',transition:'all 0.1s'}}>
+                        <div style={{fontSize:9,color:c,fontFamily:"'DM Mono'",fontWeight:700}}>{d.d}</div>
+                        <div style={{height:3,background:'#1a2a14',borderRadius:2,marginTop:3,overflow:'hidden'}}>
+                          <div style={{height:'100%',width:`${p*100}%`,background:c,borderRadius:2}}/>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Legend */}
+                <div style={{display:'flex',gap:16,marginTop:12,flexWrap:'wrap'}}>
+                  {[['#2a3d22','Unscheduled'],['#e87a5c','< 50%'],['#e8b84b','50–85%'],['#7ab648','85–100%']].map(([c,lbl])=>(
+                    <div key={lbl} style={{display:'flex',alignItems:'center',gap:5}}>
+                      <div style={{width:10,height:10,borderRadius:2,background:c}}/>
+                      <span style={{fontSize:10,color:'#94a87a',fontFamily:"'DM Mono'"}}>{lbl}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
