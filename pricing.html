@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>🛒 Wholesale Pricing Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    body{background:#0a0f18;color:#e8dfc8;font-family:'Syne',sans-serif;}
+    ::-webkit-scrollbar{width:5px;height:5px;background:#0a0f18;}
+    ::-webkit-scrollbar-thumb{background:#1e2d40;border-radius:3px;}
+    input[type=range]{-webkit-appearance:none;appearance:none;width:100%;background:transparent;cursor:pointer;position:absolute;top:-6px;left:0;opacity:0;height:18px;}
+    input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:#4a9eff;cursor:pointer;border:2px solid #0a0f18;}
+    input[type=range]::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:#4a9eff;cursor:pointer;border:2px solid #0a0f18;}
+    input[type=text],input[type=number],select{background:#0e1620;border:1px solid #1e2d40;color:#e8dfc8;border-radius:4px;padding:5px 9px;font-family:'DM Mono',monospace;font-size:12px;outline:none;}
+    input[type=text]:focus,input[type=number]:focus,select:focus{border-color:#4a9eff;}
+    select option{background:#0e1620;}
+    input[type=checkbox]{accent-color:#4a9eff;}
+    button{cursor:pointer;font-family:'DM Mono',monospace;border:none;}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+// ─── Data ────────────────────────────────────────────────────────────────────
+
+const MARKETS = {
+  Bahamas:    { currency:'BSD', margin:28, paymentDisc:1.5, defective:2.0, promo:1.0, flag:'🇧🇸' },
+  Barbados:   { currency:'BBD', margin:25, paymentDisc:1.5, defective:2.0, promo:1.0, flag:'🇧🇧' },
+  Trinidad:   { currency:'TTD', margin:22, paymentDisc:1.0, defective:1.5, promo:0.5, flag:'🇹🇹' },
+  Jamaica:    { currency:'JMD', margin:20, paymentDisc:1.0, defective:2.0, promo:1.0, flag:'🇯🇲' },
+  Guyana:     { currency:'GYD', margin:15, paymentDisc:0.5, defective:1.0, promo:0.0, flag:'🇬🇾' },
+  'St. Lucia':{ currency:'XCD', margin:18, paymentDisc:1.0, defective:1.5, promo:0.5, flag:'🇱🇨' },
+  'St. Kitts':{ currency:'XCD', margin:18, paymentDisc:1.0, defective:1.5, promo:0.5, flag:'🇰🇳' },
+  Antigua:    { currency:'XCD', margin:20, paymentDisc:1.0, defective:1.5, promo:0.5, flag:'🇦🇬' },
+  Belize:     { currency:'BZD', margin:20, paymentDisc:1.0, defective:2.0, promo:1.0, flag:'🇧🇿' },
+};
+
+const CURRENCIES = {
+  USD:{ name:'US Dollar',             symbol:'$',    def:1.00 },
+  CAD:{ name:'Canadian Dollar',       symbol:'C$',   def:1.37 },
+  MXN:{ name:'Mexican Peso',          symbol:'MX$',  def:17.2 },
+  GYD:{ name:'Guyana Dollar',         symbol:'G$',   def:209  },
+  TTD:{ name:'Trinidad Dollar',       symbol:'TT$',  def:6.77 },
+  BSD:{ name:'Bahamas Dollar',        symbol:'B$',   def:1.00 },
+  BBD:{ name:'Barbados Dollar',       symbol:'Bds$', def:2.00 },
+  JMD:{ name:'Jamaica Dollar',        symbol:'J$',   def:156  },
+  BZD:{ name:'Belize Dollar',         symbol:'BZ$',  def:2.00 },
+  XCD:{ name:'E. Caribbean Dollar',   symbol:'EC$',  def:2.70 },
+};
+
+const DEFAULT_RATES = Object.fromEntries(Object.entries(CURRENCIES).map(([k,v])=>[k,v.def]));
+
+// ─── Reusable Components ─────────────────────────────────────────────────────
+
+function Slider({ label, min, max, step, value, onChange, color='#4a9eff', unit='', fmt }) {
+  const disp = fmt ? fmt(value) : (value%1!==0 ? value.toFixed(2) : value.toLocaleString());
+  const pct = Math.max(0, Math.min(100, ((value-min)/(max-min))*100));
+  return (
+    <div style={{marginBottom:13}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+        <span style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.12em',color:'#5a7a9a',fontFamily:"'DM Mono'"}}>{label}</span>
+        <span style={{fontSize:11,fontWeight:700,color:'#e8dfc8',fontFamily:"'DM Mono'"}}>{disp}{unit}</span>
+      </div>
+      <div style={{position:'relative',height:4,background:'#1a2535',borderRadius:2}}>
+        <div style={{position:'absolute',left:0,top:0,height:'100%',width:`${pct}%`,background:color,borderRadius:2,transition:'width 0.08s'}}/>
+        <input type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(+e.target.value)}/>
+      </div>
+    </div>
+  );
+}
+
+function SliderNum({ label, min, max, step=1, value, onChange, color='#4a9eff', unit='', prefix='', fmt }) {
+  return (
+    <div style={{marginBottom:13}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+        <span style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.12em',color:'#5a7a9a',fontFamily:"'DM Mono'"}}>{label}</span>
+        <div style={{display:'flex',alignItems:'center',gap:4}}>
+          {prefix&&<span style={{fontSize:10,color:'#5a7a9a',fontFamily:"'DM Mono'"}}>{prefix}</span>}
+          <input type="number" value={value} min={min} max={max} step={step}
+            onChange={e=>onChange(+e.target.value)}
+            style={{width:65,padding:'3px 6px',fontSize:11,textAlign:'right'}}/>
+          {unit&&<span style={{fontSize:10,color:'#5a7a9a',fontFamily:"'DM Mono'"}}>{unit}</span>}
+        </div>
+      </div>
+      <div style={{position:'relative',height:4,background:'#1a2535',borderRadius:2}}>
+        <div style={{position:'absolute',left:0,top:0,height:'100%',width:`${Math.max(0,Math.min(100,((value-min)/(max-min))*100))}%`,background:color,borderRadius:2}}/>
+        <input type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(+e.target.value)}/>
+      </div>
+    </div>
+  );
+}
+
+function Card({ label, value, sub, status, big }) {
+  const sc = status==='ok'?'#4adf88':status==='warn'?'#f0c040':status==='bad'?'#f05050':'#5a7a9a';
+  const bc = status==='bad'?'#401818':status==='warn'?'#402a10':'#1a2535';
+  return (
+    <div style={{background:'#0e1620',border:`1px solid ${bc}`,borderRadius:8,padding:'12px 14px'}}>
+      <div style={{fontSize:8,textTransform:'uppercase',letterSpacing:'0.14em',color:'#3a5a7a',marginBottom:4,fontFamily:"'DM Mono'"}}>{label}</div>
+      <div style={{fontSize:big?22:17,fontWeight:800,color:'#e8dfc8',letterSpacing:'-0.02em',lineHeight:1.1}}>{value}</div>
+      {sub&&<div style={{fontSize:9,color:sc,marginTop:3,fontFamily:"'DM Mono'"}}>{sub}</div>}
+    </div>
+  );
+}
+
+function SecTitle({ children }) {
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:10,margin:'18px 0 11px'}}>
+      <div style={{height:2,width:14,background:'#4a9eff'}}/>
+      <span style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.18em',color:'#4a9eff',fontFamily:"'DM Mono'",fontWeight:700}}>{children}</span>
+      <div style={{flex:1,height:1,background:'#1a2535'}}/>
+    </div>
+  );
+}
+
+function Tab({ active, onClick, children }) {
+  return (
+    <button onClick={onClick} style={{
+      padding:'6px 13px',fontSize:9,textTransform:'uppercase',letterSpacing:'0.1em',fontFamily:"'DM Mono'",
+      background:active?'#0e1620':'transparent',color:active?'#4a9eff':'#3a5a7a',
+      border:active?'1px solid #1e2d40':'1px solid transparent',
+      borderBottom:active?'1px solid #0e1620':'none',borderRadius:'4px 4px 0 0',
+      cursor:'pointer',marginBottom:-1,transition:'color 0.15s'
+    }}>{children}</button>
+  );
+}
+
+function SideLabel({ children }) {
+  return <div style={{fontSize:8,textTransform:'uppercase',letterSpacing:'0.14em',color:'#3a5a7a',fontFamily:"'DM Mono'",margin:'14px 0 8px'}}>{children}</div>;
+}
+
+// ─── App ─────────────────────────────────────────────────────────────────────
+
+function App() {
+  // Product
+  const [product,  setProduct]  = useState('rice');
+  const [costMode, setCostMode] = useState('raw');
+
+  // Pack size
+  const [packQty,      setPackQty]      = useState(10);
+  const [packUnit,     setPackUnit]     = useState('lbs');
+  const [unitsPerCase, setUnitsPerCase] = useState(12);
+
+  // Rice costs (USD)
+  const [paddyKg,    setPaddyKg]    = useState(0.148);
+  const [milYield,   setMilYield]   = useState(0.60);
+  const [milCostKg,  setMilCostKg]  = useState(0.028);
+  const [riceFinKg,  setRiceFinKg]  = useState(0.40);
+  const [caseCostR,  setCaseCostR]  = useState(24);
+
+  // Oil costs (USD)
+  const [rawOilL,    setRawOilL]    = useState(0.85);
+  const [oilProcL,   setOilProcL]   = useState(0.12);
+  const [oilFinL,    setOilFinL]    = useState(1.10);
+  const [caseCostO,  setCaseCostO]  = useState(20);
+
+  // Shared costs
+  const [pkgCost,    setPkgCost]    = useState(0.18);
+  const [frtCost,    setFrtCost]    = useState(0.12);
+  const [dutyPct,    setDutyPct]    = useState(5);
+
+  // Pricing
+  const [wholMargin, setWholMargin] = useState(20);
+  const [floorPct,   setFloorPct]   = useState(15);
+
+  // Market & retailer profiles
+  const [selMkt,   setSelMkt]   = useState('Trinidad');
+  const [profiles, setProfiles] = useState(() =>
+    Object.fromEntries(Object.entries(MARKETS).map(([k,v])=>[k,{...v}]))
+  );
+
+  // Currency
+  const [dispCcy,    setDispCcy]    = useState('USD');
+  const [liveRates,  setLiveRates]  = useState(DEFAULT_RATES);
+  const [manRates,   setManRates]   = useState({});
+  const [useMan,     setUseMan]     = useState({});
+  const [ratesStat,  setRatesStat]  = useState('loading');
+
+  // Volume
+  const [monthVol,   setMonthVol]   = useState(500);
+  const [tab,        setTab]        = useState('waterfall');
+
+  // Fetch live rates
+  useEffect(() => {
+    fetch('https://open.er-api.com/v6/latest/USD')
+      .then(r=>r.json())
+      .then(d => {
+        if (d.rates) {
+          setLiveRates(prev => ({
+            ...prev,
+            CAD: d.rates.CAD||prev.CAD, MXN: d.rates.MXN||prev.MXN,
+            GYD: d.rates.GYD||prev.GYD, TTD: d.rates.TTD||prev.TTD,
+            JMD: d.rates.JMD||prev.JMD, XCD: d.rates.XCD||prev.XCD,
+            BBD: d.rates.BBD||2.00,     BSD: 1.00, BZD: 2.00,
+          }));
+          setRatesStat('live');
+        }
+      })
+      .catch(()=>setRatesStat('error'));
+  }, []);
+
+  const effRates = useMemo(() => {
+    const r = {...liveRates};
+    Object.entries(manRates).forEach(([k,v])=>{ if(useMan[k]&&v) r[k]=v; });
+    return r;
+  }, [liveRates, manRates, useMan]);
+
+  const ccy    = CURRENCIES[dispCcy] || CURRENCIES.USD;
+  const rate   = effRates[dispCcy] || 1;
+  const fx     = usd => usd * rate;
+  const fmtC   = (usd, d=2) => `${ccy.symbol}${fx(usd).toFixed(d)}`;
+  const fmtN   = (usd, d=2) => `${ccy.symbol}${(usd).toFixed(d)}`;
+
+  // ── COGS (USD per unit) ──────────────────────────────────────────
+  const cogs = useMemo(() => {
+    const wKg = packUnit==='lbs' ? packQty/2.20462
+              : packUnit==='kg'  ? packQty
+              : packUnit==='L'   ? packQty
+              : packUnit==='ml'  ? packQty/1000 : packQty;
+
+    if (costMode === 'case') {
+      return (product==='rice' ? caseCostR : caseCostO) / unitsPerCase;
+    }
+
+    let raw = 0;
+    if (product==='rice') {
+      if (costMode==='raw') {
+        raw = (paddyKg / milYield) * wKg + milCostKg * wKg;
+      } else {
+        raw = riceFinKg * wKg;
+      }
+    } else {
+      if (costMode==='raw') {
+        raw = (rawOilL + oilProcL) * wKg;
+      } else {
+        raw = oilFinL * wKg;
+      }
+    }
+    return (raw + pkgCost + frtCost) * (1 + dutyPct/100);
+  }, [product, costMode, packQty, packUnit, unitsPerCase,
+      paddyKg, milYield, milCostKg, riceFinKg, caseCostR,
+      rawOilL, oilProcL, oilFinL, caseCostO,
+      pkgCost, frtCost, dutyPct]);
+
+  // ── Pricing waterfall ────────────────────────────────────────────
+  const pricing = useMemo(() => {
+    const p = profiles[selMkt];
+    const billing   = cogs / (1 - wholMargin/100);
+    const deductPct = p.paymentDisc + p.defective + p.promo;
+    const deductVal = billing * deductPct/100;
+    const netSale   = billing - deductVal;
+    const shelfPrice= billing / (1 - p.margin/100);
+    const grossMgn  = (billing  - cogs) / billing * 100;
+    const netMgn    = (netSale  - cogs) / billing * 100;
+    return { billing, deductPct, deductVal, netSale, shelfPrice, grossMgn, netMgn, p };
+  }, [cogs, wholMargin, selMkt, profiles]);
+
+  const belowFloor = pricing.netMgn < floorPct;
+  const prof = profiles[selMkt];
+
+  function updateProfile(mkt, key, val) {
+    setProfiles(prev => ({ ...prev, [mkt]: { ...prev[mkt], [key]: +val } }));
+  }
+
+  // ── All markets ──────────────────────────────────────────────────
+  const allMkts = useMemo(() => Object.entries(profiles).map(([name, p]) => {
+    const billing   = cogs / (1 - wholMargin/100);
+    const deductPct = p.paymentDisc + p.defective + p.promo;
+    const netSale   = billing * (1 - deductPct/100);
+    const netMgn    = (netSale - cogs) / billing * 100;
+    const shelf     = billing / (1 - p.margin/100);
+    const mRate     = effRates[p.currency] || 1;
+    return { name, netMgn, billing, netSale, shelf, currency: p.currency, mRate, flag: MARKETS[name].flag };
+  }), [profiles, cogs, wholMargin, effRates]);
+
+  // ── Volume ───────────────────────────────────────────────────────
+  const vol = useMemo(() => {
+    const units   = monthVol * unitsPerCase;
+    const rev     = units * pricing.billing;
+    const cost    = units * cogs;
+    const deduct  = units * pricing.deductVal;
+    const netRev  = rev - deduct;
+    const profit  = netRev - cost;
+    return { units, rev, cost, deduct, netRev, profit };
+  }, [monthVol, unitsPerCase, pricing, cogs]);
+
+  // ─── Render ──────────────────────────────────────────────────────
+  return (
+    <div style={{display:'flex',minHeight:'100vh',background:'#0a0f18'}}>
+
+      {/* ── SIDEBAR ── */}
+      <div style={{width:260,flexShrink:0,background:'#0d1420',borderRight:'1px solid #1a2535',padding:'16px 13px',overflowY:'auto',maxHeight:'100vh',position:'sticky',top:0}}>
+
+        <div style={{fontSize:8,textTransform:'uppercase',letterSpacing:'0.22em',color:'#3a5a7a',fontFamily:"'DM Mono'",marginBottom:2}}>Wholesale Pricing Tool</div>
+        <div style={{fontSize:15,fontWeight:800,color:'#e8dfc8',marginBottom:14,letterSpacing:'-0.02em'}}>🛒 Proforma Dashboard</div>
+
+        {/* Product switch */}
+        <div style={{display:'flex',gap:5,marginBottom:14}}>
+          {[['rice','🌾 Rice'],['oil','🫙 Oil']].map(([p,lbl])=>(
+            <button key={p} onClick={()=>{ setProduct(p); setCostMode('raw'); setPackUnit(p==='rice'?'lbs':'L'); }} style={{
+              flex:1,padding:'6px 0',fontSize:10,fontFamily:"'DM Mono'",textTransform:'uppercase',
+              background:product===p?'#4a9eff':'#0e1620',color:product===p?'#0a0f18':'#3a5a7a',
+              border:`1px solid ${product===p?'#4a9eff':'#1e2d40'}`,borderRadius:5,transition:'all 0.15s'
+            }}>{lbl}</button>
+          ))}
+        </div>
+
+        {/* Cost mode */}
+        <SideLabel>Cost Entry Mode</SideLabel>
+        <div style={{display:'flex',gap:3,marginBottom:12}}>
+          {[['raw',product==='rice'?'Paddy':'Raw Oil'],['finished','Finished'],['case','Per Case']].map(([m,lbl])=>(
+            <button key={m} onClick={()=>setCostMode(m)} style={{
+              flex:1,padding:'4px 0',fontSize:8,fontFamily:"'DM Mono'",textAlign:'center',
+              background:costMode===m?'#162030':'#0e1620',color:costMode===m?'#4a9eff':'#3a5a7a',
+              border:`1px solid ${costMode===m?'#2a4060':'#1a2535'}`,borderRadius:4,cursor:'pointer'
+            }}>{lbl}</button>
+          ))}
+        </div>
+
+        {/* Rice costs */}
+        {product==='rice' && costMode==='raw' && <>
+          <SideLabel>Rice — Raw Inputs (USD)</SideLabel>
+          <SliderNum label="Paddy $/kg" min={0.05} max={0.50} step={0.005} value={paddyKg} onChange={setPaddyKg} prefix="$"/>
+          <SliderNum label="Milling Yield" min={45} max={70} step={1} value={Math.round(milYield*100)} onChange={v=>setMilYield(v/100)} color="#f0c040" unit="%"/>
+          <SliderNum label="Milling Cost $/kg" min={0.01} max={0.12} step={0.005} value={milCostKg} onChange={setMilCostKg} color="#f0c040" prefix="$"/>
+        </>}
+        {product==='rice' && costMode==='finished' && <>
+          <SideLabel>Rice — Finished (USD)</SideLabel>
+          <SliderNum label="Finished Rice $/kg" min={0.10} max={1.50} step={0.01} value={riceFinKg} onChange={setRiceFinKg} prefix="$"/>
+        </>}
+        {product==='rice' && costMode==='case' && <>
+          <SideLabel>Rice — Case Cost (USD)</SideLabel>
+          <div style={{marginBottom:10}}>
+            <div style={{fontSize:8,color:'#3a5a7a',fontFamily:"'DM Mono'",textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:4}}>Total Case Cost</div>
+            <input type="number" value={caseCostR} onChange={e=>setCaseCostR(+e.target.value)} step="0.50" style={{width:'100%',padding:'6px 9px'}}/>
+          </div>
+        </>}
+
+        {/* Oil costs */}
+        {product==='oil' && costMode==='raw' && <>
+          <SideLabel>Oil — Raw Inputs (USD)</SideLabel>
+          <SliderNum label="Raw Oil $/L" min={0.30} max={2.50} step={0.01} value={rawOilL} onChange={setRawOilL} prefix="$"/>
+          <SliderNum label="Processing $/L" min={0.02} max={0.50} step={0.01} value={oilProcL} onChange={setOilProcL} color="#f0c040" prefix="$"/>
+        </>}
+        {product==='oil' && costMode==='finished' && <>
+          <SideLabel>Oil — Finished (USD)</SideLabel>
+          <SliderNum label="Finished Oil $/L" min={0.50} max={3.00} step={0.01} value={oilFinL} onChange={setOilFinL} prefix="$"/>
+        </>}
+        {product==='oil' && costMode==='case' && <>
+          <SideLabel>Oil — Case Cost (USD)</SideLabel>
+          <div style={{marginBottom:10}}>
+            <div style={{fontSize:8,color:'#3a5a7a',fontFamily:"'DM Mono'",textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:4}}>Total Case Cost</div>
+            <input type="number" value={caseCostO} onChange={e=>setCaseCostO(+e.target.value)} step="0.50" style={{width:'100%',padding:'6px 9px'}}/>
+          </div>
+        </>}
+
+        {/* Shared costs */}
+        {costMode !== 'case' && <>
+          <SideLabel>Shared Costs (USD / unit)</SideLabel>
+          <SliderNum label="Packaging" min={0.02} max={1.50} step={0.01} value={pkgCost} onChange={setPkgCost} color="#4adf88" prefix="$"/>
+          <SliderNum label="Freight to Retailer" min={0.01} max={1.50} step={0.01} value={frtCost} onChange={setFrtCost} color="#4adf88" prefix="$"/>
+          <SliderNum label="Import Duties" min={0} max={40} step={0.5} value={dutyPct} onChange={setDutyPct} color="#f06060" unit="%"/>
+        </>}
+
+        {/* Pack size */}
+        <SideLabel>Pack Size</SideLabel>
+        <div style={{display:'flex',gap:5,marginBottom:7}}>
+          <input type="number" value={packQty} min={0.1} step={0.5} onChange={e=>setPackQty(+e.target.value)} style={{flex:1,padding:'5px 7px'}}/>
+          <select value={packUnit} onChange={e=>setPackUnit(e.target.value)} style={{flex:1,padding:'5px 6px'}}>
+            {product==='rice'
+              ? <><option value="lbs">lbs</option><option value="kg">kg</option></>
+              : <><option value="L">L</option><option value="ml">ml</option></>
+            }
+          </select>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:12}}>
+          <span style={{fontSize:9,color:'#5a7a9a',fontFamily:"'DM Mono'",whiteSpace:'nowrap'}}>Units / case</span>
+          <input type="number" value={unitsPerCase} min={1} step={1} onChange={e=>setUnitsPerCase(+e.target.value)} style={{flex:1,padding:'5px 7px'}}/>
+        </div>
+
+        {/* Wholesale margin */}
+        <SideLabel>Your Margins</SideLabel>
+        <SliderNum label="Wholesale Margin" min={5} max={55} step={0.5} value={wholMargin} onChange={setWholMargin} color="#c87ae8" unit="%"/>
+        <SliderNum label="Margin Floor (Alert)" min={3} max={40} step={0.5} value={floorPct} onChange={setFloorPct} color="#f06060" unit="%"/>
+
+        {/* Quick stats */}
+        <div style={{marginTop:12,background:'#0a0f18',border:'1px solid #1a2535',borderRadius:7,padding:'10px 12px'}}>
+          <div style={{fontSize:8,color:'#3a5a7a',fontFamily:"'DM Mono'",textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:7}}>Unit Summary (USD)</div>
+          {[
+            ['COGS/unit',    `$${cogs.toFixed(3)}`],
+            ['Billing price',`$${pricing.billing.toFixed(3)}`],
+            ['Gross margin', `${pricing.grossMgn.toFixed(1)}%`],
+            ['Net margin',   `${pricing.netMgn.toFixed(1)}%`],
+          ].map(([l,v],i)=>(
+            <div key={i} style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+              <span style={{fontSize:9,color:'#5a7a9a',fontFamily:"'DM Mono'"}}>{l}</span>
+              <span style={{fontSize:9,color:l.includes('Net')&&belowFloor?'#f06060':'#e8dfc8',fontFamily:"'DM Mono'",fontWeight:700}}>{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── MAIN CONTENT ── */}
+      <div style={{flex:1,padding:'20px 22px 60px',overflowY:'auto'}}>
+
+        {/* Header bar */}
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:16,flexWrap:'wrap',gap:10}}>
+          <div>
+            <div style={{fontSize:8,color:'#3a5a7a',fontFamily:"'DM Mono'",textTransform:'uppercase',letterSpacing:'0.18em',marginBottom:2}}>Active Product</div>
+            <div style={{fontSize:19,fontWeight:800,color:'#e8dfc8',letterSpacing:'-0.02em'}}>
+              {product==='rice'?'🌾 Head Rice':'🫙 Cooking Oil'} — {packQty} {packUnit} / unit · {unitsPerCase} units/case
+            </div>
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <span style={{fontSize:9,color:'#5a7a9a',fontFamily:"'DM Mono'"}}>Show in</span>
+              <select value={dispCcy} onChange={e=>setDispCcy(e.target.value)} style={{padding:'5px 8px',borderRadius:4,fontSize:11}}>
+                {Object.entries(CURRENCIES).map(([k,v])=>(
+                  <option key={k} value={k}>{k} — {v.name}</option>
+                ))}
+              </select>
+              <span style={{fontSize:8,fontFamily:"'DM Mono'",color:ratesStat==='live'?'#4adf88':'#f0c040'}}>
+                {ratesStat==='live'?'● live rates':'○ defaults'}
+              </span>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <span style={{fontSize:9,color:'#5a7a9a',fontFamily:"'DM Mono'"}}>Market</span>
+              <select value={selMkt} onChange={e=>setSelMkt(e.target.value)} style={{padding:'5px 8px',borderRadius:4,fontSize:11}}>
+                {Object.keys(MARKETS).map(m=>(
+                  <option key={m} value={m}>{MARKETS[m].flag} {m}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Margin alert banner */}
+        {belowFloor && (
+          <div style={{background:'#1a0808',border:'1px solid #601010',borderRadius:7,padding:'9px 15px',marginBottom:14,display:'flex',alignItems:'center',gap:10}}>
+            <span style={{color:'#f06060',fontSize:15}}>⚠</span>
+            <span style={{color:'#f06060',fontSize:11,fontFamily:"'DM Mono'"}}>
+              NET MARGIN {pricing.netMgn.toFixed(1)}% IS BELOW YOUR {floorPct}% FLOOR — raise billing price, reduce deductions, or cut COGS
+            </span>
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div style={{display:'flex',gap:3,borderBottom:'1px solid #1a2535',marginBottom:18}}>
+          {[
+            ['waterfall','💧 Pricing Waterfall'],
+            ['markets',  '🌎 All Markets'],
+            ['rates',    '💱 Exchange Rates'],
+            ['volume',   '📦 Volume P&L'],
+          ].map(([id,lbl])=>(
+            <Tab key={id} active={tab===id} onClick={()=>setTab(id)}>{lbl}</Tab>
+          ))}
+        </div>
+
+        {/* ══ WATERFALL TAB ══════════════════════════════════════════ */}
+        {tab==='waterfall' && (
+          <div>
+            <SecTitle>Pricing Waterfall — {MARKETS[selMkt].flag} {selMkt}</SecTitle>
+
+            {/* Top KPIs */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:9,marginBottom:16}}>
+              <Card label="Your COGS / Unit"       value={fmtC(cogs,3)}             sub="all-in production cost"/>
+              <Card label="Billing to Retailer"    value={fmtC(pricing.billing)}    sub={`your ${wholMargin}% margin`}    status="ok"/>
+              <Card label="Your Net Sale"          value={fmtC(pricing.netSale)}    sub={`after ${pricing.deductPct.toFixed(1)}% deductions`} status={belowFloor?'bad':'ok'}/>
+              <Card label="Consumer Shelf Price"   value={fmtC(pricing.shelfPrice)} sub={`retailer takes ${prof.margin}%`}/>
+            </div>
+
+            {/* Waterfall visual */}
+            <div style={{background:'#0d1420',border:'1px solid #1a2535',borderRadius:10,padding:'16px',marginBottom:16}}>
+              {[
+                { lbl:'Your total COGS',                    usd: cogs,                                     add:true,  col:'#5cc8ff', note:'production + packaging + freight + duties', bold:false },
+                { lbl:`Wholesale markup (${wholMargin}%)`,  usd: pricing.billing - cogs,                   add:true,  col:'#4adf88', note:'your target margin applied',                bold:false },
+                { lbl:'Billing price (invoiced)',           usd: pricing.billing,                          add:null,  col:'#e8dfc8', note:'what you charge the retailer',              bold:true  },
+                { lbl:`Payment terms (${prof.paymentDisc}%)`,usd: pricing.billing*prof.paymentDisc/100,    add:false, col:'#f0a040', note:'discount for early payment',                bold:false },
+                { lbl:`Defective allowance (${prof.defective}%)`,usd: pricing.billing*prof.defective/100,  add:false, col:'#f0a040', note:'credit for returns/damaged goods',          bold:false },
+                { lbl:`Promo support (${prof.promo}%)`,     usd: pricing.billing*prof.promo/100,           add:false, col:'#f0a040', note:'marketing contribution to retailer',        bold:false },
+                { lbl:'YOUR NET SALE',                      usd: pricing.netSale,                          add:null,  col:belowFloor?'#f06060':'#4adf88', note:`${pricing.netMgn.toFixed(1)}% net margin on billing price`, bold:true },
+                { lbl:`Retailer margin (${prof.margin}%)`,  usd: pricing.shelfPrice - pricing.billing,     add:true,  col:'#c87ae8', note:"retailer's own markup to consumer",        bold:false },
+                { lbl:'Consumer shelf price',               usd: pricing.shelfPrice,                       add:null,  col:'#e8dfc8', note:'what the end consumer pays in store',       bold:true  },
+              ].map((row,i) => (
+                <div key={i} style={{display:'flex',alignItems:'center',gap:10,marginBottom:6,paddingBottom:6,borderBottom:'1px solid #141e2e'}}>
+                  <div style={{width:24,height:24,borderRadius:4,background:row.add===true?`${row.col}18`:row.add===false?'#2a100818':'#1a2535',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                    <span style={{fontSize:11,color:row.col,fontWeight:700}}>
+                      {row.add===true?'+':row.add===false?'−':'='}
+                    </span>
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:row.bold?12:10,fontWeight:row.bold?800:400,color:row.bold?'#e8dfc8':'#7a9ab8',fontFamily:"'DM Mono'",letterSpacing:row.bold?'-0.01em':'0'}}>{row.lbl}</div>
+                    <div style={{fontSize:8,color:'#3a5a7a',fontFamily:"'DM Mono'"}}>{row.note}</div>
+                  </div>
+                  <div style={{textAlign:'right',flexShrink:0}}>
+                    <div style={{fontSize:row.bold?15:12,fontWeight:row.bold?800:500,color:row.col,fontFamily:"'DM Mono'"}}>{fmtC(row.usd)}</div>
+                    {!row.bold&&dispCcy!=='USD'&&<div style={{fontSize:8,color:'#3a5a7a',fontFamily:"'DM Mono'"}}>${row.usd.toFixed(3)} USD</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Retailer terms editor */}
+            <SecTitle>Retailer Terms — {selMkt} (editable per deal)</SecTitle>
+            <div style={{background:'#0d1420',border:'1px solid #1a2535',borderRadius:10,padding:'16px'}}>
+              <div style={{fontSize:9,color:'#3a5a7a',fontFamily:"'DM Mono'",marginBottom:12}}>
+                Typical CARICOM terms pre-loaded based on market research. Adjust to reflect your actual negotiated deal.
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:14}}>
+                {[
+                  ['margin',      'Retailer Margin %',         0, 50, '#c87ae8'],
+                  ['paymentDisc', 'Payment Terms Discount %',  0, 5,  '#f0a040'],
+                  ['defective',   'Defective Allowance %',     0, 10, '#f0a040'],
+                  ['promo',       'Promo / Marketing %',       0, 10, '#f0a040'],
+                ].map(([key,lbl,mn,mx,col])=>(
+                  <SliderNum key={key} label={lbl} min={mn} max={mx} step={0.5}
+                    value={prof[key]} onChange={v=>updateProfile(selMkt,key,v)}
+                    color={col} unit="%"/>
+                ))}
+              </div>
+              <div style={{marginTop:10,padding:'8px 12px',background:'#0a0f18',borderRadius:6,display:'flex',gap:20,flexWrap:'wrap'}}>
+                {[
+                  ['Total deductions',  `${pricing.deductPct.toFixed(1)}%`],
+                  ['In currency',       fmtC(pricing.deductVal)],
+                  ['Leaves you with',   `${pricing.netMgn.toFixed(1)}% net margin`],
+                ].map(([l,v])=>(
+                  <div key={l}>
+                    <div style={{fontSize:8,color:'#3a5a7a',fontFamily:"'DM Mono'",textTransform:'uppercase',letterSpacing:'0.1em'}}>{l}</div>
+                    <div style={{fontSize:13,fontWeight:800,color:'#e8dfc8',fontFamily:"'DM Mono'"}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══ ALL MARKETS TAB ════════════════════════════════════════ */}
+        {tab==='markets' && (
+          <div>
+            <SecTitle>All Markets — {product==='rice'?'🌾':'🫙'} {packQty}{packUnit} unit · billing at ${pricing.billing.toFixed(2)} USD</SecTitle>
+            <div style={{background:'#0d1420',border:'1px solid #1a2535',borderRadius:10,overflow:'hidden',marginBottom:14}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontFamily:"'DM Mono'",fontSize:10}}>
+                <thead>
+                  <tr style={{borderBottom:'1px solid #1a2535',background:'#0a0f18'}}>
+                    {['Market','Retailer Currency','Your Billing (USD)','Shelf Price (local)','Your Net Sale','Net Margin','Status'].map(h=>(
+                      <th key={h} style={{padding:'9px 12px',textAlign:'left',fontSize:8,textTransform:'uppercase',letterSpacing:'0.1em',color:'#3a5a7a',fontWeight:400}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {allMkts.map(m => {
+                    const lc = CURRENCIES[m.currency];
+                    const below = m.netMgn < floorPct;
+                    const active = selMkt===m.name;
+                    return (
+                      <tr key={m.name} onClick={()=>{setSelMkt(m.name);setTab('waterfall');}}
+                        style={{borderBottom:'1px solid #141e2e',cursor:'pointer',background:active?'#121c2c':'transparent',transition:'background 0.1s'}}>
+                        <td style={{padding:'10px 12px',color:'#e8dfc8',fontWeight:700}}>{m.flag} {m.name}</td>
+                        <td style={{padding:'10px 12px',color:'#7a9ab8'}}>{m.currency}</td>
+                        <td style={{padding:'10px 12px',color:'#e8dfc8'}}>${m.billing.toFixed(2)}</td>
+                        <td style={{padding:'10px 12px',color:'#c87ae8'}}>{lc?.symbol}{(m.shelf*m.mRate).toFixed(2)}</td>
+                        <td style={{padding:'10px 12px',color:'#e8dfc8'}}>${m.netSale.toFixed(2)}</td>
+                        <td style={{padding:'10px 12px',fontWeight:700,color:below?'#f06060':m.netMgn>25?'#4adf88':m.netMgn>15?'#f0c040':'#f0a040'}}>
+                          {m.netMgn.toFixed(1)}%
+                        </td>
+                        <td style={{padding:'10px 12px'}}>
+                          <span style={{fontSize:9,background:below?'#401010':active?'#103040':'#101a14',color:below?'#f06060':active?'#4a9eff':'#4adf88',padding:'2px 7px',borderRadius:10,border:`1px solid ${below?'#601010':active?'#1a4060':'#1a4030'}`}}>
+                            {below?'⚠ Below floor':active?'◉ Active':'✓ Viable'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{fontSize:9,color:'#3a5a7a',fontFamily:"'DM Mono'"}}>Click any row to open that market's detailed waterfall. Red = net margin below your {floorPct}% floor.</div>
+
+            {/* Margin bar chart */}
+            <SecTitle>Net Margin Comparison</SecTitle>
+            <div style={{background:'#0d1420',border:'1px solid #1a2535',borderRadius:10,padding:'16px'}}>
+              {allMkts.sort((a,b)=>b.netMgn-a.netMgn).map(m=>{
+                const below = m.netMgn < floorPct;
+                const col = below?'#f06060':m.netMgn>25?'#4adf88':'#f0c040';
+                return (
+                  <div key={m.name} style={{display:'grid',gridTemplateColumns:'90px 1fr 55px',gap:8,alignItems:'center',marginBottom:8}}>
+                    <span style={{fontSize:10,color:'#7a9ab8',fontFamily:"'DM Mono'",textAlign:'right'}}>{m.flag} {m.name.split(' ')[0]}</span>
+                    <div style={{height:7,background:'#1a2535',borderRadius:3,overflow:'hidden'}}>
+                      <div style={{height:'100%',width:`${Math.max(0,m.netMgn/50*100)}%`,background:col,borderRadius:3,transition:'width 0.3s'}}/>
+                    </div>
+                    <span style={{fontSize:11,color:col,fontFamily:"'DM Mono'",fontWeight:700}}>{m.netMgn.toFixed(1)}%</span>
+                  </div>
+                );
+              })}
+              <div style={{marginTop:10,display:'flex',alignItems:'center',gap:6}}>
+                <div style={{height:2,width:30,background:'#f06060',borderRadius:1}}/>
+                <span style={{fontSize:9,color:'#5a7a9a',fontFamily:"'DM Mono'"}}>Floor at {floorPct}%</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══ EXCHANGE RATES TAB ═════════════════════════════════════ */}
+        {tab==='rates' && (
+          <div>
+            <SecTitle>Exchange Rates (USD Base)</SecTitle>
+            <div style={{background:'#0d1420',border:'1px solid #1a2535',borderRadius:10,padding:'16px',marginBottom:14}}>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}>
+                <div style={{width:8,height:8,borderRadius:'50%',background:ratesStat==='live'?'#4adf88':'#f0c040'}}/>
+                <span style={{fontSize:10,color:ratesStat==='live'?'#4adf88':'#f0c040',fontFamily:"'DM Mono'"}}>
+                  {ratesStat==='live'
+                    ? 'Live rates loaded from open.er-api.com'
+                    : 'Using default rates — live fetch failed. Enable manual overrides below.'}
+                </span>
+              </div>
+              <div style={{fontSize:9,color:'#3a5a7a',fontFamily:"'DM Mono'",marginBottom:14}}>
+                Check "Override" to use your own rate for any currency. Your rate takes precedence over live data.
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'50px 1fr 100px 80px 90px 100px',gap:8,alignItems:'center',marginBottom:8,paddingBottom:6,borderBottom:'1px solid #1a2535'}}>
+                {['Code','Currency','Live Rate','Override?','Your Rate','Effective'].map(h=>(
+                  <span key={h} style={{fontSize:8,color:'#3a5a7a',fontFamily:"'DM Mono'",textTransform:'uppercase',letterSpacing:'0.1em'}}>{h}</span>
+                ))}
+              </div>
+              {Object.entries(CURRENCIES).filter(([k])=>k!=='USD').map(([code, info])=>(
+                <div key={code} style={{display:'grid',gridTemplateColumns:'50px 1fr 100px 80px 90px 100px',gap:8,alignItems:'center',marginBottom:8,paddingBottom:8,borderBottom:'1px solid #0f1825'}}>
+                  <span style={{fontSize:11,fontWeight:700,color:'#e8dfc8',fontFamily:"'DM Mono'"}}>{code}</span>
+                  <span style={{fontSize:10,color:'#7a9ab8',fontFamily:"'DM Mono'"}}>{info.name}</span>
+                  <span style={{fontSize:10,color:'#5a7a9a',fontFamily:"'DM Mono'"}}>{liveRates[code]?.toFixed(4)}</span>
+                  <label style={{display:'flex',alignItems:'center',gap:5,cursor:'pointer'}}>
+                    <input type="checkbox" checked={!!useMan[code]}
+                      onChange={e=>setUseMan(p=>({...p,[code]:e.target.checked}))}/>
+                    <span style={{fontSize:9,color:'#5a7a9a',fontFamily:"'DM Mono'"}}>manual</span>
+                  </label>
+                  <input type="number" disabled={!useMan[code]}
+                    value={manRates[code] ?? liveRates[code]?.toFixed(4)}
+                    onChange={e=>setManRates(p=>({...p,[code]:+e.target.value}))}
+                    step="0.0001"
+                    style={{opacity:useMan[code]?1:0.35,padding:'4px 6px',width:'100%'}}/>
+                  <span style={{fontSize:11,fontWeight:700,color:'#4a9eff',fontFamily:"'DM Mono'"}}>{(effRates[code]||1).toFixed(4)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ══ VOLUME TAB ═════════════════════════════════════════════ */}
+        {tab==='volume' && (
+          <div>
+            <SecTitle>Volume P&L — {MARKETS[selMkt].flag} {selMkt}</SecTitle>
+            <div style={{marginBottom:14}}>
+              <SliderNum label="Monthly Sales Volume (cases)" min={10} max={10000} step={10} value={monthVol} onChange={setMonthVol} color="#c87ae8" unit=" cases"/>
+            </div>
+
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:9,marginBottom:14}}>
+              <Card label="Monthly Cases"       value={monthVol.toLocaleString()}             sub={`${vol.units.toLocaleString()} units`}/>
+              <Card label="Gross Revenue"       value={fmtC(vol.rev)}                         sub="total billing" status="ok"/>
+              <Card label="Total COGS"          value={fmtC(vol.cost)}                        sub="your production cost"/>
+              <Card label="Retailer Deductions" value={fmtC(vol.deduct)}                      sub={`${pricing.deductPct.toFixed(1)}% of revenue`} status="warn"/>
+              <Card label="Net Revenue"         value={fmtC(vol.netRev)}                      sub="after all deductions" status={belowFloor?'bad':'ok'}/>
+              <Card label="Net Profit"          value={fmtC(vol.profit)}                      sub={`${((vol.profit/vol.netRev)*100).toFixed(1)}% of net`} status={vol.profit>0?'ok':'bad'} big/>
+            </div>
+
+            {/* P&L visual */}
+            <div style={{background:'#0d1420',border:'1px solid #1a2535',borderRadius:10,padding:'16px',marginBottom:14}}>
+              <div style={{fontSize:8,textTransform:'uppercase',letterSpacing:'0.14em',color:'#3a5a7a',fontFamily:"'DM Mono'",marginBottom:12}}>Monthly P&L Breakdown</div>
+              {[
+                ['Gross Revenue',     vol.rev,     '#4a9eff', true ],
+                ['− Cost of Goods',  -vol.cost,    '#f06060', false],
+                ['− Retailer Terms', -vol.deduct,  '#f0a040', false],
+                ['= Net Profit',      vol.profit,  vol.profit>=0?'#4adf88':'#f06060', true ],
+              ].map(([lbl,val,col,bold])=>(
+                <div key={lbl} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10,paddingBottom:10,borderBottom:'1px solid #141e2e'}}>
+                  <div>
+                    <div style={{fontSize:bold?13:11,fontWeight:bold?700:400,color:bold?'#e8dfc8':'#7a9ab8',fontFamily:"'DM Mono'"}}>{lbl}</div>
+                    {!bold&&<div style={{fontSize:8,color:'#3a5a7a',fontFamily:"'DM Mono'"}}>per unit: {fmtC(Math.abs(val/vol.units),3)}</div>}
+                  </div>
+                  <span style={{fontSize:bold?18:13,fontWeight:bold?800:500,color:col,fontFamily:"'DM Mono'"}}>{fmtC(val)}</span>
+                </div>
+              ))}
+            </div>
+
+            <SecTitle>Annual Projection</SecTitle>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:9}}>
+              <Card label="Annual Cases"       value={(monthVol*12).toLocaleString()}  sub="projected"/>
+              <Card label="Annual Revenue"     value={fmtC(vol.rev*12)}                sub="gross billing" status="ok"/>
+              <Card label="Annual Net Profit"  value={fmtC(vol.profit*12)}             sub={`${((vol.profit/vol.netRev)*100).toFixed(1)}% net margin`} status={vol.profit>0?'ok':'bad'} big/>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
