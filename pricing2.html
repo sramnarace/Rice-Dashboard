@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>EFG Pricing Calculator</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html{font-size:14px;}
+    body{background:#12100e;color:#e8dfc8;font-family:'IBM Plex Mono',monospace;}
+    ::-webkit-scrollbar{width:4px;background:#12100e;}
+    ::-webkit-scrollbar-thumb{background:#2a2520;border-radius:2px;}
+    input[type=range]{-webkit-appearance:none;appearance:none;width:100%;background:transparent;cursor:pointer;position:absolute;top:-7px;left:0;opacity:0;height:20px;}
+    input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#c8a84a;cursor:pointer;border:2px solid #12100e;}
+    input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#c8a84a;cursor:pointer;border:2px solid #12100e;}
+    input[type=number]{background:#1a1710;border:1px solid #2a2520;color:#e8dfc8;border-radius:3px;padding:5px 8px;font-family:'IBM Plex Mono',monospace;font-size:12px;outline:none;width:100%;}
+    input[type=number]:focus{border-color:#c8a84a;}
+    select{background:#1a1710;border:1px solid #2a2520;color:#e8dfc8;border-radius:3px;padding:5px 8px;font-family:'IBM Plex Mono',monospace;font-size:11px;outline:none;cursor:pointer;}
+    select:focus{border-color:#c8a84a;}
+    select option{background:#1a1710;}
+    button{cursor:pointer;font-family:'IBM Plex Mono',monospace;}
+    @media print{body{background:white;color:black;}}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useMemo, useEffect } = React;
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const MARKETS = {
+  Bahamas:    { flag:'🇧🇸', margin:28, payDisc:1.5, defective:2.0, promo:1.0, currency:'BSD' },
+  Barbados:   { flag:'🇧🇧', margin:25, payDisc:1.5, defective:2.0, promo:1.0, currency:'BBD' },
+  Trinidad:   { flag:'🇹🇹', margin:22, payDisc:1.0, defective:1.5, promo:0.5, currency:'TTD' },
+  Jamaica:    { flag:'🇯🇲', margin:20, payDisc:1.0, defective:2.0, promo:1.0, currency:'JMD' },
+  Guyana:     { flag:'🇬🇾', margin:15, payDisc:0.5, defective:1.0, promo:0.0, currency:'GYD' },
+  'St. Lucia':{ flag:'🇱🇨', margin:18, payDisc:1.0, defective:1.5, promo:0.5, currency:'XCD' },
+  'St. Kitts':{ flag:'🇰🇳', margin:18, payDisc:1.0, defective:1.5, promo:0.5, currency:'XCD' },
+  Antigua:    { flag:'🇦🇬', margin:20, payDisc:1.0, defective:1.5, promo:0.5, currency:'XCD' },
+  Belize:     { flag:'🇧🇿', margin:20, payDisc:1.0, defective:2.0, promo:1.0, currency:'BZD' },
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const f2 = n => isNaN(n)||!isFinite(n) ? '—' : `$${Math.abs(n).toFixed(2)}`;
+const f3 = n => isNaN(n)||!isFinite(n) ? '—' : `$${Math.abs(n).toFixed(3)}`;
+const fp = n => isNaN(n)||!isFinite(n) ? '—' : `${n.toFixed(1)}%`;
+const sign = n => n >= 0 ? '+' : '−';
+
+function computeMarket(mkt, billing, cogs, wholePct) {
+  const totalDeductPct = mkt.payDisc + mkt.defective + mkt.promo;
+  const deductVal      = billing * totalDeductPct / 100;
+  const netSale        = billing - deductVal;
+  const shelf          = billing / (1 - mkt.margin / 100);
+  const netMargin      = billing > 0 ? (netSale - cogs) / billing * 100 : 0;
+  return { totalDeductPct, deductVal, netSale, shelf, netMargin };
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function Pill({ active, onClick, children, accent }) {
+  return (
+    <button onClick={onClick} style={{
+      padding:'5px 14px', fontSize:10, textTransform:'uppercase', letterSpacing:'0.12em',
+      background: active ? (accent||'#c8a84a') : '#1a1710',
+      color: active ? '#12100e' : '#6a6050',
+      border: `1px solid ${active ? (accent||'#c8a84a') : '#2a2520'}`,
+      borderRadius:2, fontWeight: active ? 600 : 400, transition:'all 0.15s'
+    }}>{children}</button>
+  );
+}
+
+function SliderRow({ label, min, max, step, value, onChange, color='#c8a84a', unit='%' }) {
+  const pct = Math.max(0, Math.min(100, ((value-min)/(max-min))*100));
+  return (
+    <div style={{marginBottom:14}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:5}}>
+        <span style={{fontSize:10,textTransform:'uppercase',letterSpacing:'0.1em',color:'#6a6050'}}>{label}</span>
+        <span style={{fontSize:12,fontWeight:600,color:'#e8dfc8'}}>{typeof value==='number'&&value%1!==0?value.toFixed(1):value}{unit}</span>
+      </div>
+      <div style={{position:'relative',height:3,background:'#2a2520',borderRadius:2}}>
+        <div style={{position:'absolute',left:0,top:0,height:'100%',width:`${pct}%`,background:color,borderRadius:2,transition:'width 0.08s'}}/>
+        <input type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(+e.target.value)}/>
+      </div>
+    </div>
+  );
+}
+
+function BigNum({ label, value, sub, highlight, dim, warn }) {
+  const col = warn ? '#e05050' : highlight ? '#c8a84a' : dim ? '#6a6050' : '#e8dfc8';
+  const bg  = warn ? '#1e0f0f' : highlight ? '#1e1a0e' : '#1a1710';
+  const bc  = warn ? '#3a1818' : highlight ? '#3a2e18' : '#2a2520';
+  return (
+    <div style={{background:bg,border:`1px solid ${bc}`,borderRadius:4,padding:'14px 16px',minWidth:0}}>
+      <div style={{fontSize:8,textTransform:'uppercase',letterSpacing:'0.14em',color:'#4a4035',marginBottom:5}}>{label}</div>
+      <div style={{fontSize:24,fontWeight:700,color:col,fontFamily:"'Playfair Display',serif",letterSpacing:'-0.02em',lineHeight:1}}>{value}</div>
+      {sub&&<div style={{fontSize:9,color:warn?'#c04040':highlight?'#a88830':'#4a4035',marginTop:4}}>{sub}</div>}
+    </div>
+  );
+}
+
+function SectionHead({ children }) {
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:10,margin:'22px 0 12px'}}>
+      <span style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.18em',color:'#6a6050'}}>{children}</span>
+      <div style={{flex:1,height:1,background:'#2a2520'}}/>
+    </div>
+  );
+}
+
+function WaterfallRow({ op, label, usdVal, pct, note, bold, color }) {
+  const c = color || (bold ? '#e8dfc8' : '#8a7a60');
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',borderBottom:'1px solid #1e1c18'}}>
+      <div style={{width:20,height:20,borderRadius:2,background:`${c}18`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+        <span style={{fontSize:11,color:c,fontWeight:700}}>{op}</span>
+      </div>
+      <div style={{flex:1}}>
+        <div style={{fontSize:bold?11:10,fontWeight:bold?600:400,color:c}}>{label}</div>
+        {note&&<div style={{fontSize:8,color:'#4a4035'}}>{note}</div>}
+      </div>
+      <div style={{textAlign:'right',flexShrink:0}}>
+        <div style={{fontSize:bold?14:11,fontWeight:bold?700:400,color:c,fontFamily:bold?"'Playfair Display',serif":undefined}}>{usdVal}</div>
+        {pct&&<div style={{fontSize:8,color:'#4a4035'}}>{pct}</div>}
+      </div>
+    </div>
+  );
+}
+
+function RecoBox({ lines }) {
+  if (!lines || lines.length === 0) return null;
+  return (
+    <div style={{background:'#1e0f0f',border:'1px solid #3a1818',borderRadius:4,padding:'12px 16px',marginTop:12}}>
+      <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.14em',color:'#c04040',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>
+        <span>⚠</span> What needs to change
+      </div>
+      {lines.map((l,i)=>(
+        <div key={i} style={{fontSize:10,color:'#c07060',marginBottom:4,display:'flex',gap:8,alignItems:'baseline'}}>
+          <span style={{color:'#603030',flexShrink:0}}>→</span>
+          <span>{l}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Main App ─────────────────────────────────────────────────────────────────
+
+function App() {
+
+  // Core state
+  const [product,    setProduct]    = useState('oil');
+  const [mode,       setMode]       = useState('topdown');   // topdown | bottomup
+  const [packSize,   setPackSize]   = useState(1);
+  const [packUnit,   setPackUnit]   = useState('L');
+
+  // Top-down inputs
+  const [retailPrice,  setRetailPrice]  = useState(1.00);
+  const [retailerMgn,  setRetailerMgn]  = useState(30);
+  const [wholeMgn,     setWholeMgn]     = useState(80);
+
+  // Bottom-up inputs
+  const [cogsInput,    setCogsInput]    = useState(0.14);
+  const [wholeMgnBU,   setWholeMgnBU]   = useState(80);
+  const [retailerMgnBU,setRetailerMgnBU]= useState(30);
+
+  // Market editor
+  const [mktProfiles, setMktProfiles] = useState(
+    Object.fromEntries(Object.entries(MARKETS).map(([k,v])=>[k,{...v}]))
+  );
+  const [selMkt, setSelMkt] = useState('Trinidad');
+
+  // Floor
+  const [floor, setFloor] = useState(15);
+
+  // Volume
+  const [volOpen,      setVolOpen]      = useState(false);
+  const [monthlyCases, setMonthlyCases] = useState(500);
+  const [unitsPerCase, setUnitsPerCase] = useState(12);
+
+  // ── Derived — top-down ──────────────────────────────────────────
+  const td = useMemo(() => {
+    const billing      = retailPrice * (1 - retailerMgn / 100);
+    const cogsCeiling  = billing * (1 - wholeMgn / 100);
+    const markupFactor = wholeMgn >= 100 ? Infinity : 1 / (1 - wholeMgn / 100);
+    return { billing, cogsCeiling, markupFactor };
+  }, [retailPrice, retailerMgn, wholeMgn]);
+
+  // ── Derived — bottom-up ─────────────────────────────────────────
+  const bu = useMemo(() => {
+    const billing    = cogsInput / (1 - wholeMgnBU / 100);
+    const shelf      = billing   / (1 - retailerMgnBU / 100);
+    return { billing, shelf };
+  }, [cogsInput, wholeMgnBU, retailerMgnBU]);
+
+  // Active values fed to market table & waterfall
+  const activeBilling  = mode === 'topdown' ? td.billing    : bu.billing;
+  const activeCogs     = mode === 'topdown' ? td.cogsCeiling: cogsInput;
+  const activeRetail   = mode === 'topdown' ? retailPrice   : bu.shelf;
+  const activeWholePct = mode === 'topdown' ? wholeMgn      : wholeMgnBU;
+
+  // Cogs headroom (top-down mode only — user types their real COGS to compare)
+  const [realCogs, setRealCogs] = useState(0.14);
+  const tdHeadroom   = td.cogsCeiling - realCogs;
+  const tdViable     = tdHeadroom >= 0;
+
+  // Recommendations (top-down)
+  const tdRecos = useMemo(() => {
+    if (tdViable) return [];
+    const overrun = Math.abs(tdHeadroom);
+    const recos = [];
+    const newRetail = realCogs / (1 - wholeMgn/100) / (1 - retailerMgn/100);
+    recos.push(`Raise retail price from $${retailPrice.toFixed(2)} → $${newRetail.toFixed(2)} to cover your actual costs`);
+    const newWhole = (1 - realCogs / td.billing) * 100;
+    if (newWhole > 0) recos.push(`Reduce your margin from ${wholeMgn}% → ${newWhole.toFixed(1)}% to absorb current COGS`);
+    const newRetailerMgn = (1 - td.billing / (realCogs / (1 - wholeMgn/100))) * 100;
+    if (newRetailerMgn > 0 && newRetailerMgn < retailerMgn)
+      recos.push(`Negotiate retailer margin down from ${retailerMgn}% → ${newRetailerMgn.toFixed(1)}%`);
+    recos.push(`Cut COGS by $${overrun.toFixed(3)}/unit — review packaging, freight, or raw material sourcing`);
+    return recos;
+  }, [tdViable, tdHeadroom, realCogs, wholeMgn, retailerMgn, retailPrice, td.billing]);
+
+  // All markets
+  const allMarkets = useMemo(() => Object.entries(mktProfiles).map(([name, p]) => {
+    const res = computeMarket(p, activeBilling, activeCogs, activeWholePct);
+    return { name, flag: p.flag, ...res, margin: p.margin };
+  }), [mktProfiles, activeBilling, activeCogs, activeWholePct]);
+
+  // Selected market detail
+  const selP   = mktProfiles[selMkt];
+  const selRes = useMemo(() => computeMarket(selP, activeBilling, activeCogs, activeWholePct), [selP, activeBilling, activeCogs, activeWholePct]);
+
+  function updateMkt(mkt, key, val) {
+    setMktProfiles(prev => ({ ...prev, [mkt]: { ...prev[mkt], [key]: +val } }));
+  }
+
+  // Volume
+  const volUnits  = monthlyCases * unitsPerCase;
+  const volRev    = volUnits * activeBilling;
+  const volCogs   = volUnits * (mode==='topdown' ? realCogs : cogsInput);
+  const volDeduct = volUnits * selRes.deductVal;
+  const volNet    = volRev - volDeduct;
+  const volProfit = volNet - volCogs;
+
+  // Unit label
+  const unitLabel = `${packSize}${packUnit}`;
+
+  return (
+    <div style={{minHeight:'100vh',background:'#12100e',display:'flex',flexDirection:'column'}}>
+
+      {/* ── TOP BAR ── */}
+      <div style={{borderBottom:'1px solid #2a2520',padding:'14px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10}}>
+        <div>
+          <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.22em',color:'#4a4035',marginBottom:2}}>Essential Foods Group</div>
+          <div style={{fontSize:20,fontWeight:900,color:'#e8dfc8',fontFamily:"'Playfair Display',serif",letterSpacing:'-0.02em',lineHeight:1}}>
+            Pricing Calculator
+          </div>
+        </div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+          {/* Product */}
+          <div style={{display:'flex',gap:3}}>
+            <Pill active={product==='oil'}  onClick={()=>{setProduct('oil');  setPackUnit('L');   setPackSize(1);}}>🫙 Oil</Pill>
+            <Pill active={product==='rice'} onClick={()=>{setProduct('rice'); setPackUnit('lbs'); setPackSize(10);}}>🌾 Rice</Pill>
+          </div>
+          <div style={{width:1,height:20,background:'#2a2520'}}/>
+          {/* Mode */}
+          <div style={{display:'flex',gap:3}}>
+            <Pill active={mode==='topdown'}  onClick={()=>setMode('topdown')}  accent='#c8a84a'>↓ Retail → COGS</Pill>
+            <Pill active={mode==='bottomup'} onClick={()=>setMode('bottomup')} accent='#5ca8c8'>↑ COGS → Retail</Pill>
+          </div>
+          {/* Pack */}
+          <div style={{display:'flex',gap:4,alignItems:'center'}}>
+            <input type="number" value={packSize} min={0.1} step={0.5}
+              onChange={e=>setPackSize(+e.target.value)}
+              style={{width:52,padding:'5px 6px',fontSize:11}}/>
+            <select value={packUnit} onChange={e=>setPackUnit(e.target.value)} style={{padding:'5px 6px',fontSize:11}}>
+              {product==='oil'
+                ? <><option value="L">L</option><option value="ml">ml</option></>
+                : <><option value="lbs">lbs</option><option value="kg">kg</option></>}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* ── BODY ── */}
+      <div style={{display:'grid',gridTemplateColumns:'300px 1fr',flex:1,overflow:'hidden'}}>
+
+        {/* ── LEFT PANEL ── */}
+        <div style={{borderRight:'1px solid #2a2520',padding:'18px 16px',overflowY:'auto',background:'#0f0e0c'}}>
+
+          {mode === 'topdown' ? (<>
+            {/* TOP-DOWN CONTROLS */}
+            <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.16em',color:'#c8a84a',marginBottom:14,fontWeight:600}}>
+              ↓ Working Backwards From Retail
+            </div>
+
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.1em',color:'#6a6050',marginBottom:5}}>Target Retail Price / {unitLabel}</div>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{color:'#6a6050',fontSize:13}}>$</span>
+                <input type="number" value={retailPrice} min={0.10} step={0.05}
+                  onChange={e=>setRetailPrice(+e.target.value)}
+                  style={{fontSize:22,fontWeight:700,fontFamily:"'Playfair Display',serif",color:'#c8a84a',background:'transparent',border:'none',borderBottom:'1px solid #3a3020',borderRadius:0,padding:'2px 0',outline:'none',width:'100%'}}/>
+              </div>
+              <div style={{fontSize:8,color:'#4a4035',marginTop:3}}>consumer shelf price — your starting point</div>
+            </div>
+
+            <SliderRow label="Retailer Margin" min={10} max={50} step={0.5} value={retailerMgn} onChange={setRetailerMgn}/>
+            <SliderRow label="Your Wholesale Margin" min={10} max={95} step={0.5} value={wholeMgn} onChange={setWholeMgn} color='#5ca8c8'/>
+
+            {/* Results cascade */}
+            <div style={{background:'#1a1710',border:'1px solid #2a2520',borderRadius:4,padding:'12px',marginBottom:14}}>
+              {[
+                { lbl:'Billing price (sell-in)',  val: f2(td.billing),     note:`retail × ${100-retailerMgn}%` },
+                { lbl:'Your COGS ceiling',        val: f3(td.cogsCeiling), note:`billing × ${100-wholeMgn}%`, hi:true },
+                { lbl:'Markup factor',            val: `${(1/(1-wholeMgn/100)).toFixed(2)}×`, note:'COGS × this = billing' },
+              ].map(r => (
+                <div key={r.lbl} style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:8,paddingBottom:8,borderBottom:'1px solid #1e1c18'}}>
+                  <div>
+                    <div style={{fontSize:10,color: r.hi?'#c8a84a':'#8a7a60'}}>{r.lbl}</div>
+                    <div style={{fontSize:8,color:'#4a4035'}}>{r.note}</div>
+                  </div>
+                  <span style={{fontSize:r.hi?16:12,fontWeight:r.hi?700:400,color:r.hi?'#c8a84a':'#8a7a60',fontFamily:r.hi?"'Playfair Display',serif":undefined}}>{r.val}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Real COGS comparison */}
+            <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.1em',color:'#6a6050',marginBottom:5}}>Your Actual COGS / {unitLabel}</div>
+            <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8}}>
+              <span style={{color:'#6a6050',fontSize:12}}>$</span>
+              <input type="number" value={realCogs} step={0.001} min={0}
+                onChange={e=>setRealCogs(+e.target.value)}
+                style={{fontSize:18,fontWeight:600,fontFamily:"'Playfair Display',serif",color: tdViable?'#4adf88':'#e05050',background:'transparent',border:'none',borderBottom:`1px solid ${tdViable?'#2a4030':'#4a2020'}`,borderRadius:0,padding:'2px 0',outline:'none',width:'100%'}}/>
+            </div>
+            <div style={{padding:'8px 12px',borderRadius:3,background: tdViable?'#0f1e14':'#1e0f0f',border:`1px solid ${tdViable?'#2a4a30':'#3a1818'}`,marginBottom:14}}>
+              <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.1em',color:tdViable?'#4a8a60':'#8a4040',marginBottom:2}}>
+                {tdViable ? '✓ Within ceiling' : '✕ Exceeds ceiling'}
+              </div>
+              <div style={{fontSize:16,fontWeight:700,color:tdViable?'#4adf88':'#e05050',fontFamily:"'Playfair Display',serif"}}>
+                {sign(tdHeadroom)} ${Math.abs(tdHeadroom).toFixed(3)} / {unitLabel}
+              </div>
+              <div style={{fontSize:8,color:'#4a4035',marginTop:2}}>
+                {tdViable ? 'headroom remaining' : 'overrun — model breaks here'}
+              </div>
+            </div>
+
+            {!tdViable && <RecoBox lines={tdRecos}/>}
+
+            <SliderRow label="Margin Floor Alert" min={5} max={40} step={0.5} value={floor} onChange={setFloor} color='#e05050'/>
+
+          </>) : (<>
+
+            {/* BOTTOM-UP CONTROLS */}
+            <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.16em',color:'#5ca8c8',marginBottom:14,fontWeight:600}}>
+              ↑ Building Up From Your Costs
+            </div>
+
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'0.1em',color:'#6a6050',marginBottom:5}}>Your Total COGS / {unitLabel}</div>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{color:'#6a6050',fontSize:13}}>$</span>
+                <input type="number" value={cogsInput} min={0.001} step={0.001}
+                  onChange={e=>setCogsInput(+e.target.value)}
+                  style={{fontSize:22,fontWeight:700,fontFamily:"'Playfair Display',serif",color:'#5ca8c8',background:'transparent',border:'none',borderBottom:'1px solid #203040',borderRadius:0,padding:'2px 0',outline:'none',width:'100%'}}/>
+              </div>
+              <div style={{fontSize:8,color:'#4a4035',marginTop:3}}>all-in production cost per unit</div>
+            </div>
+
+            <SliderRow label="Your Wholesale Margin" min={10} max={95} step={0.5} value={wholeMgnBU} onChange={setWholeMgnBU} color='#5ca8c8'/>
+            <SliderRow label="Retailer Margin" min={10} max={50} step={0.5} value={retailerMgnBU} onChange={setRetailerMgnBU}/>
+
+            {/* Results cascade */}
+            <div style={{background:'#1a1710',border:'1px solid #2a2520',borderRadius:4,padding:'12px',marginBottom:14}}>
+              {[
+                { lbl:'Billing price (sell-in)',  val: f2(bu.billing),     note:`COGS ÷ ${100-wholeMgnBU}%` },
+                { lbl:'Consumer shelf price',     val: f2(bu.shelf),       note:`billing ÷ ${100-retailerMgnBU}%`, hi:true },
+                { lbl:'Markup factor',            val: `${(1/(1-wholeMgnBU/100)).toFixed(2)}×`, note:'COGS × this = billing' },
+              ].map(r => (
+                <div key={r.lbl} style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:8,paddingBottom:8,borderBottom:'1px solid #1e1c18'}}>
+                  <div>
+                    <div style={{fontSize:10,color:r.hi?'#5ca8c8':'#8a7a60'}}>{r.lbl}</div>
+                    <div style={{fontSize:8,color:'#4a4035'}}>{r.note}</div>
+                  </div>
+                  <span style={{fontSize:r.hi?16:12,fontWeight:r.hi?700:400,color:r.hi?'#5ca8c8':'#8a7a60',fontFamily:r.hi?"'Playfair Display',serif":undefined}}>{r.val}</span>
+                </div>
+              ))}
+            </div>
+
+            <SliderRow label="Margin Floor Alert" min={5} max={40} step={0.5} value={floor} onChange={setFloor} color='#e05050'/>
+
+          </>)}
+
+          {/* Market editor */}
+          <SectionHead>Edit Retailer Terms — {selMkt}</SectionHead>
+          <select value={selMkt} onChange={e=>setSelMkt(e.target.value)} style={{width:'100%',marginBottom:12,padding:'6px 8px'}}>
+            {Object.keys(MARKETS).map(m=><option key={m} value={m}>{MARKETS[m].flag} {m}</option>)}
+          </select>
+          {[
+            ['margin',    'Retailer Margin %',    10, 50],
+            ['payDisc',   'Payment Discount %',    0,  5],
+            ['defective', 'Defective Allowance %', 0, 10],
+            ['promo',     'Promo Support %',        0, 10],
+          ].map(([key,lbl,mn,mx])=>(
+            <SliderRow key={key} label={lbl} min={mn} max={mx} step={0.5}
+              value={selP[key]} onChange={v=>updateMkt(selMkt,key,v)}/>
+          ))}
+
+        </div>
+
+        {/* ── RIGHT PANEL ── */}
+        <div style={{overflowY:'auto',padding:'20px 24px 60px'}}>
+
+          {/* KPI row */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:9,marginBottom:18}}>
+            <BigNum label={mode==='topdown'?'Target Retail / unit':'Projected Shelf / unit'}
+              value={f2(activeRetail)} highlight sub="consumer price"/>
+            <BigNum label="Billing to Retailer"
+              value={f2(activeBilling)} sub={`your sell-in / ${unitLabel}`}/>
+            <BigNum label={mode==='topdown'?'COGS Ceiling':'Your COGS'}
+              value={mode==='topdown'?f3(td.cogsCeiling):f3(cogsInput)}
+              highlight={mode==='topdown'} sub="max allowable all-in cost"/>
+            <BigNum label={mode==='topdown'?'Headroom / Overrun':'Gross Margin $'}
+              value={mode==='topdown'
+                ? `${sign(tdHeadroom)}${f3(Math.abs(tdHeadroom)).replace('$','$')}`
+                : f2(bu.billing - cogsInput)}
+              warn={mode==='topdown'&&!tdViable}
+              sub={mode==='topdown'
+                ? (tdViable?'you have room':'your costs exceed ceiling')
+                : `${activeWholePct}% margin`}/>
+          </div>
+
+          {/* Waterfall */}
+          <SectionHead>Pricing Waterfall — {MARKETS[selMkt].flag} {selMkt}</SectionHead>
+          <div style={{background:'#171512',border:'1px solid #2a2520',borderRadius:5,padding:'14px 16px',marginBottom:18}}>
+            <WaterfallRow op="="  bold label={mode==='topdown'?'Target retail price':'Projected shelf price'} usdVal={f2(activeRetail)} color='#c8a84a' note="consumer pays this in store"/>
+            <WaterfallRow op="−" label={`Retailer margin (${selP.margin}%)`} usdVal={f2(activeRetail*selP.margin/100)} note="retailer keeps this"/>
+            <WaterfallRow op="=" bold label="Your billing / sell-in price" usdVal={f2(activeBilling)} color='#e8dfc8' note="what you invoice the retailer"/>
+            <WaterfallRow op="−" label={`Payment terms (${selP.payDisc}%)`} usdVal={f2(activeBilling*selP.payDisc/100)} note="discount for early payment"/>
+            <WaterfallRow op="−" label={`Defective allowance (${selP.defective}%)`} usdVal={f2(activeBilling*selP.defective/100)} note="returns credit"/>
+            <WaterfallRow op="−" label={`Promo support (${selP.promo}%)`} usdVal={f2(activeBilling*selP.promo/100)} note="marketing contribution"/>
+            <WaterfallRow op="=" bold label="Your net sale (after all deductions)" usdVal={f2(selRes.netSale)} color={selRes.netMargin<floor?'#e05050':'#4adf88'} note={`${fp(selRes.netMargin)} net margin on billing price`}/>
+            <WaterfallRow op="−" bold={false} label={mode==='topdown'?`Your COGS ceiling`:'Your COGS'} usdVal={mode==='topdown'?f3(td.cogsCeiling):f3(cogsInput)} color='#8a7a60' note="all-in production cost"/>
+            <WaterfallRow op="=" bold label="Net profit / unit" usdVal={f2(selRes.netSale - activeCogs)} color={selRes.netSale-activeCogs>=0?'#4adf88':'#e05050'} note="what stays in your pocket"/>
+          </div>
+
+          {/* All markets table */}
+          <SectionHead>All CARICOM Markets — at ${f2(activeBilling).replace('$','')} billing</SectionHead>
+          <div style={{background:'#171512',border:'1px solid #2a2520',borderRadius:5,overflow:'hidden',marginBottom:18}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:10}}>
+              <thead>
+                <tr style={{background:'#0f0e0c',borderBottom:'1px solid #2a2520'}}>
+                  {['Market','Retailer Margin','Deductions','Net Sale','Net Margin','Shelf Price','Status'].map(h=>(
+                    <th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:8,textTransform:'uppercase',letterSpacing:'0.1em',color:'#4a4035',fontWeight:400}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {allMarkets.map(m => {
+                  const below   = m.netMargin < floor;
+                  const active  = selMkt === m.name;
+                  const profit  = m.netSale - activeCogs;
+                  return (
+                    <tr key={m.name}
+                      onClick={()=>setSelMkt(m.name)}
+                      style={{borderBottom:'1px solid #1e1c18',cursor:'pointer',background:active?'#1c1a16':'transparent',transition:'background 0.1s'}}>
+                      <td style={{padding:'9px 12px',fontWeight:600,color:'#e8dfc8'}}>{m.flag} {m.name}</td>
+                      <td style={{padding:'9px 12px',color:'#8a7a60'}}>{fp(m.margin)}</td>
+                      <td style={{padding:'9px 12px',color:'#8a7a60'}}>{fp(m.totalDeductPct)}</td>
+                      <td style={{padding:'9px 12px',color:'#e8dfc8'}}>{f2(m.netSale)}</td>
+                      <td style={{padding:'9px 12px',fontWeight:600,color:below?'#e05050':m.netMargin>30?'#4adf88':'#c8a84a'}}>{fp(m.netMargin)}</td>
+                      <td style={{padding:'9px 12px',color:'#8a7a60'}}>{f2(m.shelf)}</td>
+                      <td style={{padding:'9px 12px'}}>
+                        <span style={{fontSize:8,padding:'2px 7px',borderRadius:10,
+                          background:below?'#2a1010':active?'#1a2010':'#101a0e',
+                          color:below?'#e05050':active?'#c8a84a':'#4adf88',
+                          border:`1px solid ${below?'#4a2020':active?'#3a3010':'#1a3018'}`}}>
+                          {below?'⚠ below floor':active?'◉ selected':'✓ viable'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Margin bar chart */}
+          <div style={{background:'#171512',border:'1px solid #2a2520',borderRadius:5,padding:'14px 16px',marginBottom:18}}>
+            <div style={{fontSize:8,textTransform:'uppercase',letterSpacing:'0.14em',color:'#4a4035',marginBottom:12}}>Net Margin by Market</div>
+            {[...allMarkets].sort((a,b)=>b.netMargin-a.netMargin).map(m=>{
+              const below = m.netMargin < floor;
+              const col   = below?'#e05050':m.netMargin>30?'#4adf88':'#c8a84a';
+              return (
+                <div key={m.name} style={{display:'grid',gridTemplateColumns:'80px 1fr 45px',gap:8,alignItems:'center',marginBottom:7}}>
+                  <span style={{fontSize:9,color:'#8a7a60',textAlign:'right'}}>{m.flag} {m.name.split(' ')[0]}</span>
+                  <div style={{height:5,background:'#2a2520',borderRadius:2,overflow:'hidden'}}>
+                    <div style={{height:'100%',width:`${Math.max(0,(m.netMargin/60)*100)}%`,background:col,borderRadius:2,transition:'width 0.3s'}}/>
+                  </div>
+                  <span style={{fontSize:10,color:col,fontWeight:600}}>{fp(m.netMargin)}</span>
+                </div>
+              );
+            })}
+            <div style={{marginTop:10,display:'flex',alignItems:'center',gap:6}}>
+              <div style={{height:1,width:24,background:'#e05050',borderStyle:'dashed',borderTop:'1px dashed #e05050'}}/>
+              <span style={{fontSize:8,color:'#6a5050'}}>floor at {floor}%</span>
+            </div>
+          </div>
+
+          {/* Volume P&L — collapsed */}
+          <div style={{border:'1px solid #2a2520',borderRadius:5,overflow:'hidden',marginBottom:18}}>
+            <button onClick={()=>setVolOpen(o=>!o)}
+              style={{width:'100%',padding:'11px 16px',background:'#171512',display:'flex',justifyContent:'space-between',alignItems:'center',border:'none',color:'#8a7a60',fontSize:9,textTransform:'uppercase',letterSpacing:'0.14em'}}>
+              <span>📦 Volume P&L — {selMkt}</span>
+              <span style={{color:'#4a4035',fontSize:12}}>{volOpen?'▲':'▼'}</span>
+            </button>
+            {volOpen && (
+              <div style={{background:'#141210',padding:'14px 16px'}}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
+                  <div>
+                    <div style={{fontSize:9,color:'#6a6050',textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:4}}>Monthly Cases</div>
+                    <input type="number" value={monthlyCases} min={1} step={10} onChange={e=>setMonthlyCases(+e.target.value)} style={{width:'100%'}}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9,color:'#6a6050',textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:4}}>Units per Case</div>
+                    <input type="number" value={unitsPerCase} min={1} step={1} onChange={e=>setUnitsPerCase(+e.target.value)} style={{width:'100%'}}/>
+                  </div>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>
+                  <BigNum label="Monthly Units"    value={volUnits.toLocaleString()} sub="units / month"/>
+                  <BigNum label="Gross Revenue"    value={`$${volRev.toFixed(0)}`}   sub="billing × units" highlight/>
+                  <BigNum label="Total COGS"       value={`$${volCogs.toFixed(0)}`}  sub="cost × units"/>
+                  <BigNum label="Retailer Deducts" value={`$${volDeduct.toFixed(0)}`} sub={`${fp(selRes.totalDeductPct)} of revenue`}/>
+                  <BigNum label="Net Revenue"      value={`$${volNet.toFixed(0)}`}   sub="after deductions"/>
+                  <BigNum label="Net Profit / Mo"  value={`$${volProfit.toFixed(0)}`} highlight={volProfit>0} warn={volProfit<0} sub={`$${(volProfit*12).toFixed(0)} / year`}/>
+                </div>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
